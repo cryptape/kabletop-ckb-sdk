@@ -25,14 +25,13 @@ fn load() -> Result<ckb::Vars> {
 #[cfg(test)]
 mod test {
     use super::load;
-    use ckb_types::prelude::*;
     use hex;
 
     #[test]
     fn test_load() {
         let vars = load().expect("load");
-        let hash = vars.nft.tx_hash;
-        let expect_hash = hex::decode("a01b827feb4a09a319ff4db7a563fc9601da6384ba633a7c5f2825d15baab2a0").expect("hex");
-        assert_eq!(hash.as_slice(), expect_hash.as_slice(), "bad nft transaction hash");
+        let pubkey_hash = vars.common.user_key.pubhash.clone();
+        let expected_pubkey_hash = hex::decode("40e88263ef526a8248570e931cfb2f2fb3ed044f").expect("hex");
+        assert_eq!(&pubkey_hash[..20], expected_pubkey_hash.as_slice(), "bad private key");
     }
 }

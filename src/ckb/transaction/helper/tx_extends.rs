@@ -1,76 +1,55 @@
 use ckb_types::{
     prelude::*, bytes::Bytes,
     core::{
-        DepType, TransactionView, Capacity
+        DepType, TransactionView, Capacity, HeaderView
     },
     packed::{
-        Byte32, OutPoint, CellDep, Script, CellInput, CellOutput
+        OutPoint, CellDep, CellInput, CellOutput
     }
 };
 use anyhow::{
     Result, anyhow
 };
 use crate::ckb::{
-    transaction::genesis::GENESIS as _G, rpc::methods as rpc
+    transaction::genesis::GENESIS as _G,
+    rpc::{
+        methods as rpc,
+        types::{
+            ScriptType, SearchKey
+        }
+    }
 };
-use std::{
-    str::FromStr, convert::TryInto
-};
-use ckb_sdk::HumanCapacity;
-use hex;
-
-pub fn hex_to_byte32(hash: &str) -> Result<Byte32> {
-    let hash: [u8; 32] = hex::decode(hash)?.try_into().expect("transport hex to byte32");
-    Ok(Byte32::new(hash))
-}
-
-pub async fn outpoint_to_output(outpoint: &OutPoint) -> Result<CellOutput> {
-    let tx = rpc::get_transaction(outpoint.tx_hash()).await?;
-    let out_index: u32 = outpoint.index().unpack();
-    let output = tx
-        .raw()
-        .outputs()
-        .get(out_index as usize)
-        .ok_or_else(|| anyhow!("index is out-of-bound in transaction outputs"))?;
-    Ok(output)
-}
-
-pub fn fee(fee: &str) -> Capacity {
-    let fee = HumanCapacity::from_str(fee).unwrap().0;
-    Capacity::shannons(fee)
-}
+use super::utils::*;
 
 pub fn add_sighash_celldep(tx: TransactionView) -> TransactionView {
-    tx
+    return tx
         .as_advanced_builder()
         .cell_dep(_G.sighash_celldep.clone())
         .build()
 }
 
 pub fn add_multisig_celldep(tx: TransactionView) -> TransactionView {
-    tx
+    return tx
         .as_advanced_builder()
         .cell_dep(_G.multisig_celldep.clone())
         .build()
 }
 
-pub fn add_code_celldep(tx: TransactionView, tx_hash: Byte32) -> TransactionView {
-    let outpoint = OutPoint::new(tx_hash, 0);
+pub fn add_code_celldep(tx: TransactionView, outpoint: OutPoint) -> TransactionView {
     let celldep  = CellDep::new_builder()
         .out_point(outpoint)
         .dep_type(DepType::Code.into())
         .build();
-    tx
+    return tx
         .as_advanced_builder()
         .cell_dep(celldep)
         .build()
 }
 
-pub fn sighash_script_with_lockargs(lock_args: &[u8]) -> Script {
-    _G.sighash_script
-        .clone()
-        .as_builder()
-        .args(Bytes::from(lock_args.to_vec()).pack())
+pub fn add_headerdep(tx: TransactionView, header: HeaderView) -> TransactionView {
+    return tx
+        .as_advanced_builder()
+        .header_dep(header.hash())
         .build()
 }
 
@@ -84,14 +63,16 @@ pub async fn complete_tx_with_sighash_cells(tx: TransactionView, pubkey_hash: [u
     // prepare secp256k1 cells until required capacity is reached
     let mut offered_capacity = Capacity::zero();
     for input in tx.inputs().into_iter() {
-        let input = outpoint_to_output(&input.previous_output()).await?;
+        let input = outpoint_to_output(input.previous_output()).await?;
         let input_capacity = Capacity::shannons(input.capacity().unpack());
         offered_capacity = offered_capacity.safe_add(input_capacity)?;
     }
     let mut cursor = None;
     let mut tx_inputs = vec![];
+    let secp256k1_script = sighash_script_with_lockargs(&pubkey_hash[..]);
     while offered_capacity.as_u64() < required_capacity.as_u64() {
-        let live_cells = rpc::get_secp256k1_live_cells(&pubkey_hash[..], 5, cursor).await?;
+        let search_key = SearchKey::new(secp256k1_script.clone().into(), ScriptType::Lock);
+        let live_cells = rpc::get_live_cells(search_key, 5, cursor).await?;
         let mut inputs = live_cells
             .objects
             .iter()
@@ -122,7 +103,6 @@ pub async fn complete_tx_with_sighash_cells(tx: TransactionView, pubkey_hash: [u
     let mut tx_outputs = vec![];
     let mut tx_outputs_data = vec![];
     if offered_capacity.as_u64() > required_capacity.as_u64() {
-        let secp256k1_script = sighash_script_with_lockargs(&pubkey_hash[..]);
         let extra_capacity = offered_capacity.as_u64() - required_capacity.as_u64();
         let output = CellOutput::new_builder()
             .lock(secp256k1_script)

@@ -14,11 +14,8 @@ use anyhow::{
     Result, anyhow
 };
 use crate::{
-    ckb::{
-        transaction::helper,
-        rpc::types::{
-            Tip, Pagination, Cell, SearchKey, ScriptType, Order, ckb
-        }
+    ckb::rpc::types::{
+        Tip, Pagination, Cell, SearchKey, Order, ckb
     },
     config::VARS as _C,
 };
@@ -34,16 +31,20 @@ lazy_static! {
 }
 
 pub fn get_genesis_block() -> Result<Block> {
+    get_block(0)
+}
+
+pub fn get_block(block_number: u64) -> Result<Block> {
     let block = CKB_CLIENT
         .lock()
         .unwrap()
-        .get_block_by_number(0)
+        .get_block_by_number(block_number)
         .unwrap_or_else(|err| {
             eprintln!("{}", err);
             None
         });
     let block = {
-        let genesis = block.ok_or_else(|| anyhow!("genesis block is non-existent"))?;
+        let genesis = block.ok_or_else(|| anyhow!(format!("block #{} is non-existent", block_number)))?;
         let block: BlockView = genesis.into();
         Block::new_unchecked(block.data().as_bytes())
     };
@@ -75,13 +76,7 @@ pub async fn get_tip_info() -> Result<Tip> {
     }
 }
 
-pub async fn get_secp256k1_live_cells(lock_args: &[u8], limit: u32, cursor: Option<JsonBytes>) -> Result<Pagination<ckb::Cell>> {
-    let secp256k1_script = helper::sighash_script_with_lockargs(lock_args);
-    let search_key = SearchKey {
-        script: secp256k1_script.into(),
-        script_type: ScriptType::Lock,
-        filter: None,
-    };
+pub async fn get_live_cells(search_key: SearchKey, limit: u32, cursor: Option<JsonBytes>) -> Result<Pagination<ckb::Cell>> {
     let output = INDEXER_CLIENT.request("get_cells", Some(Params::Array(vec![
         json!(search_key),
         json!(Order::Asc),

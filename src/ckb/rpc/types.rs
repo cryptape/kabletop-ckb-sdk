@@ -9,7 +9,7 @@ use serde::{
 // Json Types
 //////////////////////////////////////////////////
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Copy, Clone)]
 #[serde(rename_all = "snake_case")]
 pub enum ScriptType {
     Lock,
@@ -30,7 +30,7 @@ pub struct SearchKey {
     pub filter:      Option<SearchKeyFilter>,
 }
 
-#[derive(Deserialize, Serialize, Default)]
+#[derive(Deserialize, Serialize, Default, Clone)]
 pub struct SearchKeyFilter {
     pub script:                Option<Script>,
     pub output_data_len_range: Option<[Uint64; 2]>,
@@ -59,27 +59,48 @@ pub struct Cell {
     pub tx_index:     Uint32,
 }
 
+impl SearchKey {
+    pub fn new(script: Script, script_type: ScriptType) -> SearchKey {
+        SearchKey {
+            script,
+            script_type,
+            filter: None
+        }
+    }
+
+    pub fn filter(&self, script: Script) -> Self {
+        let mut filter: SearchKeyFilter = self.filter.clone().unwrap_or(SearchKeyFilter::default());
+        filter.script = Some(script);
+        SearchKey {
+            script:      self.script.clone(),
+            script_type: self.script_type,
+            filter:      Some(filter)
+        }
+    }
+}
+
 //////////////////////////////////////////////////
 // Ckb Types
 //////////////////////////////////////////////////
 
 pub mod ckb {
     use ckb_types::{
-        prelude::*,
-        bytes::Bytes,
+        prelude::*, bytes::Bytes,
         packed::{
-            CellOutput, OutPoint, Uint32, Uint64
+            CellOutput, OutPoint, Uint32, Block
         }
     };
     use std::convert::From;
-    use crate::ckb::rpc::types as json;
+    use crate::ckb::{
+        rpc::types as json, rpc::methods as rpc
+    };
 
     pub struct Cell {
-        pub output:       CellOutput,
-        pub output_data:  Bytes,
-        pub out_point:    OutPoint,
-        pub block_number: Uint64,
-        pub tx_index:     Uint32,
+        pub output:      CellOutput,
+        pub output_data: Bytes,
+        pub out_point:   OutPoint,
+        pub block:       Block,
+        pub tx_index:    Uint32,
     }
 
     impl From<json::Cell> for Cell {
@@ -92,9 +113,9 @@ pub mod ckb {
                 let out_point: OutPoint = json_cell.out_point.into();
                 OutPoint::new_unchecked(out_point.as_bytes())
             };
-            let block_number = {
+            let block = {
                 let block_number: u64 = json_cell.block_number.into();
-                block_number.pack()
+                rpc::get_block(block_number).unwrap()
             };
             let tx_index = {
                 let tx_index: u32 = json_cell.tx_index.into();
@@ -102,7 +123,7 @@ pub mod ckb {
             };
             let output_data = json_cell.output_data.into_bytes();
             Cell {
-                output, out_point, block_number, tx_index, output_data,
+                output, out_point, block, tx_index, output_data,
             }
         }
     }
