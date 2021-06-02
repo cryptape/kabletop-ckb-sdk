@@ -21,6 +21,7 @@ use crate::ckb::{
 };
 use super::utils::*;
 
+// add sighash_blake160 cell deps into [tx] which represents the basic lock script for ckb
 pub fn add_sighash_celldep(tx: TransactionView) -> TransactionView {
     return tx
         .as_advanced_builder()
@@ -28,6 +29,7 @@ pub fn add_sighash_celldep(tx: TransactionView) -> TransactionView {
         .build()
 }
 
+// add multisig cell deps into [tx] which helps check signature from multi-parts
 pub fn add_multisig_celldep(tx: TransactionView) -> TransactionView {
     return tx
         .as_advanced_builder()
@@ -35,6 +37,7 @@ pub fn add_multisig_celldep(tx: TransactionView) -> TransactionView {
         .build()
 }
 
+// add custom [outpoint] as a cell dep into [tx]
 pub fn add_code_celldep(tx: TransactionView, outpoint: OutPoint) -> TransactionView {
     let celldep  = CellDep::new_builder()
         .out_point(outpoint)
@@ -46,6 +49,7 @@ pub fn add_code_celldep(tx: TransactionView, outpoint: OutPoint) -> TransactionV
         .build()
 }
 
+// add [header] as a header dep into [tx]
 pub fn add_headerdep(tx: TransactionView, header: HeaderView) -> TransactionView {
     return tx
         .as_advanced_builder()
@@ -53,6 +57,12 @@ pub fn add_headerdep(tx: TransactionView, header: HeaderView) -> TransactionView
         .build()
 }
 
+// the original inputs and outputs from [tx] may not be valid for ckb "capaicity checking", so there should be a
+// function to handle this, the function complete_tx_with_sighash_cells will search and add normal sighash_blake160
+// cells into inputs from [tx] to expand capacity in input part, and then generate new sighash_blake160 cells into
+// outputs to receive the remain capacity (already subtracts [fee]) for next use.
+//
+// the script_args from every sighash_blake160 cells from inputs and outputs are all filled with [pubkey_hash]
 pub async fn complete_tx_with_sighash_cells(tx: TransactionView, pubkey_hash: [u8; 20], fee: Capacity) -> Result<TransactionView> {
     // determin current minimum capacity from transaction's outputs
     let mut required_capacity = fee;

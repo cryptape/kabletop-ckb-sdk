@@ -79,10 +79,7 @@ impl SearchKey {
     }
 }
 
-//////////////////////////////////////////////////
-// Ckb Types
-//////////////////////////////////////////////////
-
+// ckb types format for a better use that turned from previous json types
 pub mod ckb {
     use ckb_types::{
         prelude::*, bytes::Bytes,

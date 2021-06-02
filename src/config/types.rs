@@ -23,6 +23,7 @@ pub struct Vars {
     pub kabletop: Contract,
 }
 
+// ckb types format from string format "Kabletop.toml" config file
 pub mod ckb {
     use std::convert::{
         From, TryInto

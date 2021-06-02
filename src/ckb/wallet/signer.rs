@@ -8,6 +8,7 @@ use ckb_hash::new_blake2b;
 use ckb_crypto::secp::Privkey;
 use crate::ckb::transaction::helper;
 
+// sign a whole [tx] with private [key], the [extra_witnesses] is some external args which just placed into witness part
 pub async fn sign(tx: TransactionView, key: &Privkey, extra_witnesses: Vec<WitnessArgs>) -> TransactionView {
     let futures = tx
         .inputs()
@@ -43,12 +44,13 @@ pub async fn sign(tx: TransactionView, key: &Privkey, extra_witnesses: Vec<Witne
         .map(|witness| witness.as_bytes().pack())
         .collect::<Vec<_>>();
     signed_witnesses.append(&mut extra_witnesses);
-    tx
+    return tx
         .as_advanced_builder()
         .set_witnesses(signed_witnesses)
         .build()
 }
 
+// sign the every single input data in [tx] and get the signed bytes
 fn sign_input(
     tx: &TransactionView, key: &Privkey, witness: &WitnessArgs, extra_witnesses: &Vec<WitnessArgs>
 ) -> packed::Bytes {

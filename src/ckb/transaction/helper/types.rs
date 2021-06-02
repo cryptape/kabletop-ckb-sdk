@@ -5,22 +5,25 @@ use std::{
     mem::size_of, convert::TryInto
 };
 
+// composers use this data to represent their NFT creations
 pub struct NFTConfig {
-    package_price:    u64,
-    package_capacity: u8,
-    nft_config_table: Vec<([u8; 20], u16)>
+    package_price:    u64,                  // ckb price per nft package
+    package_capacity: u8,                   // nft count that one package could contain
+    nft_config_table: Vec<([u8; 20], u16)>  // array for nft blake160/rate pair (rate means the probability a nft revealed)
 }
 
 impl NFTConfig {
     pub fn new(
         package_price: u64, package_capacity: u8, nft_config_table: Vec<([u8; 20], u16)>
     ) -> NFTConfig {
+        // limit the basic params
         if package_price < 1
             || package_capacity < 1 
             || package_capacity > 32 
             || nft_config_table.is_empty() {
             panic!("bad nft config params");
         }
+        // rates in nft_config_table should be ASC order
         let mut last_rate = 0u16;
         nft_config_table.iter().for_each(|&(_, rate)| {
             if last_rate > rate {
@@ -33,11 +36,13 @@ impl NFTConfig {
         }
     }
 
-    pub fn buy_package(&self, buy_count: u64) -> Capacity {
-        Capacity::shannons(self.package_price * buy_count)
+    // get the total ckb price of [package_count] packages
+    pub fn buy_package(&self, package_count: u64) -> Capacity {
+        Capacity::shannons(self.package_price * package_count)
     }
 
-    pub fn rip_package(&self, transactions_root: Byte32, uncles_hash: Byte32, count: u8) -> Bytes {
+    // reveal [package_count] nft packages with the random seed which made from the mix of [transaction_root] and [uncles_hash]
+    pub fn rip_package(&self, transactions_root: Byte32, uncles_hash: Byte32, package_count: u8) -> Bytes {
         let mut lotteries = vec![];
         for &tr in transactions_root.raw_data().iter() {
             for &ur in uncles_hash.raw_data().iter() {
@@ -46,7 +51,7 @@ impl NFTConfig {
             }
         }
         let mut collection: Vec<u8> = vec![];
-        for i in 0..count {
+        for i in 0..package_count {
             let lottery = lotteries[i as usize];
             let mut expect_nft: Option<[u8; 20]> = None;
             for &(nft, rate) in self.nft_config_table.iter() {
@@ -95,6 +100,7 @@ impl From<Bytes> for NFTConfig {
     }
 }
 
+// internal struct for fetching bytes from stream
 struct StreamFetcher<'load> {
     index: usize,
     stream: &'load Vec<u8>
