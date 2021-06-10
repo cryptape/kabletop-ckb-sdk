@@ -127,7 +127,7 @@ pub fn kabletop_script(script_args: Vec<u8>) -> Script {
 }
 
 // get a sighash_blake160 script with [lock_args] fills into args part
-pub fn sighash_script_with_lockargs(lock_args: &[u8]) -> Script {
+pub fn sighash_script(lock_args: &[u8]) -> Script {
     _G.sighash_script
         .clone()
         .as_builder()

@@ -1,3 +1,3 @@
-pub mod kabletop;
+pub mod protocol;
 pub mod convert;
-pub mod partial;
+pub mod interact;

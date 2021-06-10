@@ -1,17 +1,20 @@
-use crate::ckb::{
-    rpc::methods as rpc,
-    wallet::{
-        keystore, signer
-    },
-    transaction::{
-        genesis::GENESIS as _G, helper
+use crate::{
+    config::VARS as _C,
+    ckb::{
+        rpc::methods as rpc,
+        wallet::{
+            keystore, signer
+        },
+        transaction::{
+            genesis::GENESIS as _G, helper, channel::protocol::*
+        }
     }
 };
 use anyhow::{
     Result, anyhow
 };
 use ckb_types::{
-    prelude::*, bytes::Bytes as Bytes,
+    prelude::*, bytes::Bytes,
     core::{
         Capacity, TransactionBuilder, TransactionView
     },
@@ -30,12 +33,21 @@ use ckb_crypto::secp::{
 };
 use ckb_hash::new_blake2b;
 use std::convert::TryInto;
-use crate::config::VARS as _C;
-use super::kabletop::*;
 
-////////////////////////////////////////////////////
-/// CHANNEL-TX PARTIAL BUILDING FUNCTIONS
-////////////////////////////////////////////////////
+/* CHANNEL_CELL
+*
+* use a combine of [prepare_channel_tx, complete_channel_tx, sign_channel_tx] to complish building an open-channel-tx 
+*
+* data:
+* 	  none
+* lock:
+* 	  code_hash = kabletop_contract 
+* 	  hash_type = data
+* 	  args 	    = staking_ckb(u64) | deck_size(u8) | begin_blocknumber(u64) | lock_code_hash(blake256) 
+* 	  			  | user1_pkhash(blake160) | user1_nfts(vec<blake160>) | user2_pkhash(blake160) | user2_nfts(vec<blake160>)
+* type:
+* 	  any
+*/
 
 // prepare kabletop tx with user1-part filled
 pub async fn prepare_channel_tx(
@@ -158,8 +170,8 @@ pub fn sign_channel_tx(
     }
 
     // check wether two nft lists from kabletop args match both their nft cells'
-    let user1_lock_script = helper::sighash_script_with_lockargs(&user1_pkhash[..]);
-    let user2_lock_script = helper::sighash_script_with_lockargs(&user2_pkhash[..]);
+    let user1_lock_script = helper::sighash_script(&user1_pkhash[..]);
+    let user2_lock_script = helper::sighash_script(&user2_pkhash[..]);
     let type_script = {
         let wallet = helper::wallet_script(keystore::COMPOSER_PUBHASH.clone().to_vec());
         helper::nft_script(wallet.calc_script_hash().raw_data().to_vec())

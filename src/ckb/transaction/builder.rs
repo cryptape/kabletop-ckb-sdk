@@ -1,16 +1,18 @@
 use ckb_types::{
-    prelude::*,
+    prelude::*, bytes::Bytes,
     core::{
-        TransactionBuilder, TransactionView, Capacity
+        TransactionBuilder, TransactionView, Capacity, ScriptHashType
     },
     packed::{
-        CellOutput, CellInput, OutPoint
+        CellOutput, CellInput, OutPoint, Script, WitnessArgs
     }
 };
 use crate::{
     config::VARS as _C,
     ckb::{
-        transaction::helper,
+        transaction::{
+            helper, channel::protocol
+        },
         rpc::{
             methods as rpc,
             types::{
@@ -25,6 +27,10 @@ use crate::{
 use anyhow::{
     Result, anyhow
 };
+use molecule::{
+    prelude::Entity as MolEntity, bytes::Bytes as MolBytes
+};
+use ckb_crypto::secp::Signature;
 
 /* CONFIG_CELL
 *
@@ -311,7 +317,7 @@ pub async fn build_tx_reveal_nft_package() -> Result<TransactionView> {
         .build();
 
     let output_nft = CellOutput::new_builder()
-        .lock(helper::sighash_script_with_lockargs(&keystore::USER_PUBHASH.to_vec()))
+        .lock(helper::sighash_script(&keystore::USER_PUBHASH.to_vec()))
         .type_(Some(nft_script).pack())
         .build_exact_capacity(Capacity::bytes(output_nft_data.len())?)?;
 
@@ -337,6 +343,185 @@ pub async fn build_tx_reveal_nft_package() -> Result<TransactionView> {
     Ok(tx)
 }
 
+/* CHALLENGE_CELL
+*
+* to help user create a channel challenge tx which will consume previous channel cell no matter it's in original
+* state or challenge state
+* 
+* // INPUT_CELL
+* on-chain channel_cell
+* 	
+* // OUTPUT_CELL
+* data:
+* 	  round_count (uint8) | user_round_signature | user_type (uint8) | operations (vec<string>)
+* lock:
+* 	  (same as channel_cell)
+* type:
+* 	  (same as channel_cell)
+* capacity:
+* 	  (same as channel_cell)
+* 
+* // WITNESSES
+* [
+* 	  lock: user1_or_user2_input_signature
+* 	  lock: user1_round_signature, input_type: user2_type (uint8) | operations (vec<string>)
+* 	  lock: user2_round_signature, input_type: user1_type (uint8) | operations (vec<string>)
+* 	  ...
+* ]
+*/
+pub async fn build_tx_challenge_channel(
+    channel_script: Script, challenge_data: protocol::Challenge, rounds: &Vec<(protocol::Round, Signature)>
+) -> Result<TransactionView> {
+    // make sure channel stays open
+    let search_key = SearchKey::new(channel_script.clone().into(), ScriptType::Lock);
+    let channel_cell = rpc::get_live_cells(search_key, 1, None).await?.objects;
+    if channel_cell.is_empty() {
+        return Err(anyhow!("channel with specified channel_script is non-existent"));
+    }
+
+    // prepare input/output and witnesses
+    let input = CellInput::new_builder()
+        .previous_output(channel_cell[0].out_point.clone())
+        .build();
+    let output = CellOutput::new_builder()
+        .lock(channel_script)
+        .build_exact_capacity(Capacity::shannons(challenge_data.as_slice().len() as u64))?;
+    let witnesses = rounds
+        .iter()
+        .map(|(round, signature)| {
+            WitnessArgs::new_builder()
+                .lock(Some(Bytes::from(signature.serialize())).pack())
+                .input_type(Some(Bytes::from(round.as_slice().to_vec())).pack())
+                .build()
+        })
+        .collect::<Vec<_>>();
+    
+    // turn channel to challenge state
+    let tx = TransactionBuilder::default()
+        .input(input)
+        .output(output)
+        .output_data(Bytes::from(challenge_data.as_slice().to_vec()).pack())
+        .build();
+    let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
+    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, witnesses, &|_| true);
+
+    Ok(tx)
+}
+
+/* SETTLEMENT_CELL (from CHANNEL_CELL or CHALLENGE_CELL)
+*
+* to help user close an opened kabletop channel from original state or challenge state, this function will
+* consume current channel cell and generate two sighash cells for two users separately
+*
+* // INPUT_CELL
+* since:
+* 	  tip blocknumber (uint64, only from challenge)
+* others:
+* 	  (same as channel_cell or challenge_cell)
+* 	
+* // OUTPUT_CELL_1
+* data:
+* 	  any
+* lock:
+* 	  code_hash = lock_code_hash (from kabletop_args)
+* 	  hash_type = data
+* 	  args 	    = user1_pkhash   (from kabletop_args)
+* type:
+* 	  any
+* capacity:
+* 	  any
+* 
+* // OUTPUT_CELL_2
+* data:
+* 	  any
+* lock:
+* 	  code_hash = lock_code_hash (from kabletop_args)
+* 	  hash_type = data
+* 	  args 	    = user2_pkhash   (from kabletop_args)
+* type:
+* 	  any
+* capacity:
+* 	  any
+* 
+* // WITNESSES
+* [
+* 	lock: sender_input_signature
+* 	lock: user1_round_signature, input_type: user2_type (uint8) | operations (vec<string>)
+* 	lock: user2_round_signature, input_type: user1_type (uint8) | operations (vec<string>)
+* 	...
+* ]
+*/
+pub async fn build_tx_close_channel(
+    channel_script: Script, rounds: &Vec<(protocol::Round, Signature)>, winner: u8, from_challenge: bool
+) -> Result<TransactionView> {
+    // make sure channel stays open
+    let search_key = SearchKey::new(channel_script.clone().into(), ScriptType::Lock);
+    let channel_cell = rpc::get_live_cells(search_key, 1, None).await?.objects;
+    if channel_cell.is_empty() {
+        return Err(anyhow!("channel with specified channel_script is non-existent"));
+    }
+
+    // prepare input and witnesses
+    let mut input = CellInput::new_builder().previous_output(channel_cell[0].out_point.clone());
+    if from_challenge {
+        let block_number = rpc::get_tip_block_number();
+        input = input.since(block_number.pack());
+    }
+    let witnesses = rounds
+        .iter()
+        .map(|(round, signature)| {
+            WitnessArgs::new_builder()
+                .lock(Some(Bytes::from(signature.serialize())).pack())
+                .input_type(Some(Bytes::from(round.as_slice().to_vec())).pack())
+                .build()
+        })
+        .collect::<Vec<_>>();
+
+    // prepare outputs
+    let kabletop_args = {
+        let args: Bytes = channel_cell[0].output.lock().args().unpack();
+        protocol::Args::new_unchecked(MolBytes::from(args.to_vec()))
+    };
+    let channel_ckb: u64 = channel_cell[0].output.capacity().unpack();
+    let staking_ckb: u64 = kabletop_args.user_staking_ckb().into();
+    if channel_ckb <= staking_ckb * 2 {
+        return Err(anyhow!("broken channel with wrong cell capacity"));
+    }
+    let bet_ckb = channel_ckb / 2 - staking_ckb;
+    let mut user1_capacity = staking_ckb;
+    let mut user2_capacity = staking_ckb;
+    match winner {
+        1 => user1_capacity += bet_ckb,
+        2 => user2_capacity += bet_ckb,
+        _ => return Err(anyhow!("winner must be 1 or 2"))
+    }
+    let outputs = 
+    vec![(&kabletop_args.user1_pkhash(), user1_capacity), (&kabletop_args.user2_pkhash(), user2_capacity)]
+        .iter()
+        .map(|&(pkhash, ckb)| {
+            let lock_script = Script::new_builder()
+                .code_hash(kabletop_args.lock_code_hash().into())
+                .hash_type(ScriptHashType::Data.into())
+                .args(Bytes::from(<[u8; 20]>::from(pkhash).to_vec()).pack())
+                .build();
+            CellOutput::new_builder()
+                .lock(lock_script)
+                .build_exact_capacity(Capacity::shannons(ckb))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    
+    // cloen kabletop channel
+    let tx = TransactionBuilder::default()
+        .input(input.build())
+        .outputs(outputs)
+        .outputs_data(vec![Bytes::default(), Bytes::default()].pack())
+        .build();
+    let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
+    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, witnesses, &|_| true);
+
+    Ok(tx)
+}
+
 ///////////////////////////////////////////////////////
 /// TX BUILDING FUNCTIONS TEST
 ///////////////////////////////////////////////////////
@@ -351,7 +536,7 @@ mod test {
     use crate::{
         config::VARS as _C, ckb::wallet::keystore,
         ckb::transaction::{
-            builder, helper, channel::partial
+            builder, helper, channel::interact
         }
     };
 
@@ -406,7 +591,7 @@ mod test {
     }
 
     #[test]
-    fn test_build_tx_open_kabletop_channel() {
+    fn test_build_tx_open_channel() {
         let user1_privkey = keystore::USER_PRIVKEY.clone();
         let user2_privkey = {
             let byte32 = helper::blake256_to_byte32("d44955b4770247b233c284268c961085e622febb61d364c9a5cabe0c238f08d4")
@@ -426,18 +611,18 @@ mod test {
         };
 
         // user1 prepare
-        let tx = block_on(partial::prepare_channel_tx(staking_ckb, bet_ckb, deck_size, &user1_nfts, &user1_pkhash))
+        let tx = block_on(interact::prepare_channel_tx(staking_ckb, bet_ckb, deck_size, &user1_nfts, &user1_pkhash))
             .expect("prepare_channel_tx");
         // user2 complete
-        let tx = block_on(partial::complete_channel_tx(tx, staking_ckb, bet_ckb, deck_size, &user2_nfts, &user2_pkhash))
+        let tx = block_on(interact::complete_channel_tx(tx, staking_ckb, bet_ckb, deck_size, &user2_nfts, &user2_pkhash))
             .expect("complete_channel_tx");
         // user2 sign
-        let tx = partial::sign_channel_tx(tx, staking_ckb, bet_ckb, deck_size, &user2_nfts, &user2_privkey)
+        let tx = interact::sign_channel_tx(tx, staking_ckb, bet_ckb, deck_size, &user2_nfts, &user2_privkey)
             .expect("user2 sign_channel_tx");
         // user1 sign
-        let tx = partial::sign_channel_tx(tx, staking_ckb, bet_ckb, deck_size, &user1_nfts, &user1_privkey)
+        let tx = interact::sign_channel_tx(tx, staking_ckb, bet_ckb, deck_size, &user1_nfts, &user1_privkey)
             .expect("user1 sign_channel_tx");
 
-        write_tx_to_file(tx, format!("{}.json", "open_kabletop_channel"));
+        write_tx_to_file(tx, format!("{}.json", "open_channel"));
     }
 }

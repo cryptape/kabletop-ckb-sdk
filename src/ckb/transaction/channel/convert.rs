@@ -2,7 +2,7 @@ use molecule::{
     prelude::*, bytes::Bytes
 };
 use ckb_types::packed::Byte32;
-use super::kabletop::*;
+use super::protocol::*;
 
 ///////////////////////////////////////////
 /// Into Functions
@@ -91,9 +91,29 @@ impl From<Uint8T> for u8 {
 
 impl From<Blake160> for [u8; 20] {
     fn from(blake160: Blake160) -> Self {
+        Self::from(&blake160)
+    }
+}
+
+impl From<&Blake160> for [u8; 20] {
+    fn from(blake160: &Blake160) -> Self {
         let mut bytes = [0u8; 20];
         bytes.copy_from_slice(blake160.raw_data().to_vec().as_slice());
         bytes
+    }
+}
+
+impl From<Blake256> for Byte32 {
+    fn from(blake256: Blake256) -> Self {
+        Self::from(&blake256)
+    }
+}
+
+impl From<&Blake256> for Byte32 {
+    fn from(blake256: &Blake256) -> Self {
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(blake256.raw_data().to_vec().as_slice());
+        Self::new(bytes)
     }
 }
 

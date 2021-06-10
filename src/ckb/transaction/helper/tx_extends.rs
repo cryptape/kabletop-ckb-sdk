@@ -98,7 +98,7 @@ pub async fn complete_tx_with_sighash_cells(tx: TransactionView, pubkey_hash: &[
     }
     let mut cursor = None;
     let mut tx_inputs = vec![];
-    let secp256k1_script = sighash_script_with_lockargs(&pubkey_hash[..]);
+    let secp256k1_script = sighash_script(&pubkey_hash[..]);
     while offered_capacity.as_u64() < required_capacity.as_u64() {
         let search_key = SearchKey::new(secp256k1_script.clone().into(), ScriptType::Lock);
         let live_cells = rpc::get_live_cells(search_key, 5, cursor).await?;
@@ -158,7 +158,7 @@ pub async fn complete_tx_with_sighash_cells(tx: TransactionView, pubkey_hash: &[
 pub async fn complete_tx_with_nft_cells(
     tx: TransactionView, user_pkhash: &[u8; 20], composer_pkhash: &[u8; 20], mut required_nfts: Vec<[u8; 20]>
 ) -> Result<TransactionView> {
-    let lock_script = sighash_script_with_lockargs(&user_pkhash[..]);
+    let lock_script = sighash_script(&user_pkhash[..]);
     let type_script = {
         let wallet = wallet_script(composer_pkhash.to_vec());
         nft_script(wallet.calc_script_hash().raw_data().to_vec())
