@@ -43,7 +43,7 @@ use anyhow::{
 *     args 	    = composer_pubkey_blake160
 */
 pub async fn build_tx_compose_nft(
-    package_price: u64, package_capacity: u8, nft_table: Vec<([u8; 20], u16)>
+    package_price: u64, package_capacity: u8, nft_table: Vec<([u8; 20], u8)>
 ) -> Result<TransactionView> {
     // prepare scripts
     let wallet_script = helper::wallet_script(keystore::COMPOSER_PUBHASH.to_vec());
@@ -77,12 +77,12 @@ pub async fn build_tx_compose_nft(
         .build();
 
     // complete tx
-    let tx = helper::complete_tx_with_sighash_cells(tx, keystore::COMPOSER_PUBHASH.clone(), helper::fee("0.1")).await?;
+    let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::COMPOSER_PUBHASH, helper::fee("0.1")).await?;
     let tx = helper::add_code_celldep(tx, OutPoint::new(_C.payment.tx_hash.clone(), 0));
     let tx = helper::add_code_celldep(tx, OutPoint::new(_C.wallet.tx_hash.clone(), 0));
 
     // sign tx
-    let tx = signer::sign(tx, &keystore::COMPOSER_PRIVKEY, vec![]).await;
+    let tx = signer::sign(tx, &keystore::COMPOSER_PRIVKEY, vec![], &|_| true);
     Ok(tx)
 }
 
@@ -143,13 +143,13 @@ pub async fn build_tx_create_nft_store() -> Result<TransactionView> {
         .build();
 
     // complete tx
-    let tx = helper::complete_tx_with_sighash_cells(tx, keystore::USER_PUBHASH.clone(), helper::fee("0.1")).await?;
+    let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
     let tx = helper::add_code_celldep(tx, OutPoint::new(_C.payment.tx_hash.clone(), 0));
     let tx = helper::add_code_celldep(tx, OutPoint::new(_C.wallet.tx_hash.clone(), 0));
     let tx = helper::add_code_celldep(tx, config_cell[0].out_point.clone());
 
     // sign tx
-    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![]).await;
+    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![], &|_| true);
     Ok(tx)
 }
 
@@ -224,13 +224,13 @@ pub async fn build_tx_purchase_nft_package(package_count: u8) -> Result<Transact
         .build();
 
     // complete tx
-    let tx = helper::complete_tx_with_sighash_cells(tx, keystore::USER_PUBHASH.clone(), helper::fee("0.1")).await?;
+    let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
     let tx = helper::add_code_celldep(tx, OutPoint::new(_C.payment.tx_hash.clone(), 0));
     let tx = helper::add_code_celldep(tx, OutPoint::new(_C.wallet.tx_hash.clone(), 0));
     let tx = helper::add_code_celldep(tx, config_cell[0].out_point.clone());
 
     // sign tx
-    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![]).await;
+    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![], &|_| true);
     Ok(tx)
 }
 
@@ -299,9 +299,9 @@ pub async fn build_tx_reveal_nft_package() -> Result<TransactionView> {
     // prepare output data
     let nft_config = helper::NFTConfig::from(config_cell[0].output_data.clone());
     let block = wallet_cell[0].block.clone().into_view();
-    let count = wallet_cell[0].output_data[0];
+    let package_count = wallet_cell[0].output_data[0];
     let output_wallet_data = vec![0];
-    let output_nft_data = nft_config.rip_package(block.transactions_root(), block.uncles_hash(), count);
+    let output_nft_data = nft_config.rip_package(block.header().hash(), package_count);
 
     // prepare output cell
     let output_wallet = CellOutput::new_builder()
@@ -325,7 +325,7 @@ pub async fn build_tx_reveal_nft_package() -> Result<TransactionView> {
         .build();
 
     // complete tx
-    let tx = helper::complete_tx_with_sighash_cells(tx, keystore::USER_PUBHASH.clone(), helper::fee("0.1")).await?;
+    let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
     let tx = helper::add_code_celldep(tx, OutPoint::new(_C.payment.tx_hash.clone(), 0));
     let tx = helper::add_code_celldep(tx, OutPoint::new(_C.wallet.tx_hash.clone(), 0));
     let tx = helper::add_code_celldep(tx, OutPoint::new(_C.nft.tx_hash.clone(), 0));
@@ -333,9 +333,13 @@ pub async fn build_tx_reveal_nft_package() -> Result<TransactionView> {
     let tx = helper::add_headerdep(tx, block.header());
 
     // sign tx
-    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![]).await;
+    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![], &|_| true);
     Ok(tx)
 }
+
+///////////////////////////////////////////////////////
+/// TX BUILDING FUNCTIONS TEST
+///////////////////////////////////////////////////////
 
 #[cfg(test)]
 mod test {
@@ -343,21 +347,22 @@ mod test {
     use futures::executor::block_on;
     use ckb_types::core::TransactionView;
     use ckb_jsonrpc_types::TransactionView as JsonTxView;
+    use ckb_crypto::secp::Privkey;
     use crate::{
-        config::VARS as _C, 
+        config::VARS as _C, ckb::wallet::keystore,
         ckb::transaction::{
-            builder, helper
+            builder, helper, channel::partial
         }
     };
 
-    fn default_nfts() -> Vec<([u8; 20], u16)> {
+    fn default_nfts() -> Vec<([u8; 20], u8)> {
         vec![
-            (helper::blake160(&[1u8]), 936),
-            (helper::blake160(&[2u8]), 25456),
-            (helper::blake160(&[3u8]), 26771),
-            (helper::blake160(&[4u8]), 27034),
-            (helper::blake160(&[5u8]), 30470),
-            (helper::blake160(&[6u8]), 62600),
+            (helper::blake160(&[1u8]), 56),
+            (helper::blake160(&[2u8]), 86),
+            (helper::blake160(&[3u8]), 101),
+            (helper::blake160(&[4u8]), 134),
+            (helper::blake160(&[5u8]), 180),
+            (helper::blake160(&[6u8]), 255),
         ]
     }
 
@@ -390,7 +395,7 @@ mod test {
 
     #[test]
     fn test_build_tx_purchase_nft_package() {
-        let tx = block_on(builder::build_tx_purchase_nft_package(10)).expect("purchase nft package");
+        let tx = block_on(builder::build_tx_purchase_nft_package(1)).expect("purchase nft package");
         send_transaction(tx, "purchase_nft_package");
     }
 
@@ -398,5 +403,41 @@ mod test {
     fn test_build_tx_reveal_nft_package() {
         let tx = block_on(builder::build_tx_reveal_nft_package()).expect("reveal nft package");
         send_transaction(tx, "reveal_nft_package");
+    }
+
+    #[test]
+    fn test_build_tx_open_kabletop_channel() {
+        let user1_privkey = keystore::USER_PRIVKEY.clone();
+        let user2_privkey = {
+            let byte32 = helper::blake256_to_byte32("d44955b4770247b233c284268c961085e622febb61d364c9a5cabe0c238f08d4")
+                .expect("blake2b_256 to [u8; 32]");
+            Privkey::from(ckb_types::H256(byte32))
+        };
+        let user1_pkhash = keystore::USER_PUBHASH.clone();
+        let user2_pkhash = helper::privkey_to_pkhash(&user2_privkey);
+
+        let staking_ckb = helper::fee("500").as_u64();
+        let bet_ckb = helper::fee("2000").as_u64();
+        let deck_size = 1u8;
+        let (user1_nfts, user2_nfts) = {
+            let nfts = default_nfts().iter().map(|&(nft, _)| nft).collect::<Vec<[u8; 20]>>();
+            // println!("default_nfts = {:?}", nfts.iter().map(|nft| hex::encode(nft)).collect::<Vec<String>>());
+            (vec![nfts[1]], vec![nfts[1]])
+        };
+
+        // user1 prepare
+        let tx = block_on(partial::prepare_channel_tx(staking_ckb, bet_ckb, deck_size, &user1_nfts, &user1_pkhash))
+            .expect("prepare_channel_tx");
+        // user2 complete
+        let tx = block_on(partial::complete_channel_tx(tx, staking_ckb, bet_ckb, deck_size, &user2_nfts, &user2_pkhash))
+            .expect("complete_channel_tx");
+        // user2 sign
+        let tx = partial::sign_channel_tx(tx, staking_ckb, bet_ckb, deck_size, &user2_nfts, &user2_privkey)
+            .expect("user2 sign_channel_tx");
+        // user1 sign
+        let tx = partial::sign_channel_tx(tx, staking_ckb, bet_ckb, deck_size, &user1_nfts, &user1_privkey)
+            .expect("user1 sign_channel_tx");
+
+        write_tx_to_file(tx, format!("{}.json", "open_kabletop_channel"));
     }
 }

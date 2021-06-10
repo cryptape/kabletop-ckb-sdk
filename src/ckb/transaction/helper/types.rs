@@ -4,27 +4,27 @@ use ckb_types::{
 use std::{
     mem::size_of, convert::TryInto
 };
+use ckb_hash::blake2b_256;
 
 // composers use this data to represent their NFT creations
 pub struct NFTConfig {
     package_price:    u64,                  // ckb price per nft package
     package_capacity: u8,                   // nft count that one package could contain
-    nft_config_table: Vec<([u8; 20], u16)>  // array for nft blake160/rate pair (rate means the probability a nft revealed)
+    nft_config_table: Vec<([u8; 20], u8)>  // array for nft blake160/rate pair (rate means the probability a nft revealed)
 }
 
 impl NFTConfig {
     pub fn new(
-        package_price: u64, package_capacity: u8, nft_config_table: Vec<([u8; 20], u16)>
+        package_price: u64, package_capacity: u8, nft_config_table: Vec<([u8; 20], u8)>
     ) -> NFTConfig {
         // limit the basic params
-        if package_price < 1
-            || package_capacity < 1 
-            || package_capacity > 32 
+        if package_price == 0
+            || package_capacity == 0 
             || nft_config_table.is_empty() {
             panic!("bad nft config params");
         }
         // rates in nft_config_table should be ASC order
-        let mut last_rate = 0u16;
+        let mut last_rate = 0u8;
         nft_config_table.iter().for_each(|&(_, rate)| {
             if last_rate > rate {
                 panic!("bad nft config rate param");
@@ -42,17 +42,16 @@ impl NFTConfig {
     }
 
     // reveal [package_count] nft packages with the random seed which made from the mix of [transaction_root] and [uncles_hash]
-    pub fn rip_package(&self, transactions_root: Byte32, uncles_hash: Byte32, package_count: u8) -> Bytes {
-        let mut lotteries = vec![];
-        for &tr in transactions_root.raw_data().iter() {
-            for &ur in uncles_hash.raw_data().iter() {
-                let lottery = (tr as u16) << 8 | ur as u16;
-                lotteries.push(lottery);
-            }
-        }
+    pub fn rip_package(&self, header_hash: Byte32, package_count: u8) -> Bytes {
+        let mut lotteries = header_hash.raw_data().to_vec();
         let mut collection: Vec<u8> = vec![];
-        for i in 0..package_count {
-            let lottery = lotteries[i as usize];
+        let nft_count = package_count as usize * self.package_capacity as usize;
+        for i in 0..nft_count {
+            if i >= lotteries.len() {
+                let next_hash = blake2b_256(lotteries.clone());
+                lotteries.append(&mut next_hash.to_vec());
+            }
+            let lottery = lotteries[i];
             let mut expect_nft: Option<[u8; 20]> = None;
             for &(nft, rate) in self.nft_config_table.iter() {
                 if lottery < rate {
@@ -88,10 +87,10 @@ impl From<Bytes> for NFTConfig {
         let package_price    = stream.get_u64();
         let package_capacity = stream.get_u8();
         let mut nft_config_table = vec![];
-        let item_size = size_of::<[u8; 20]>() + size_of::<u16>();
+        let item_size = size_of::<[u8; 20]>() + size_of::<u8>();
         for _ in 0..stream.count(item_size) {
             let nft  = stream.get_blake160();
-            let rate = stream.get_u16();
+            let rate = stream.get_u8();
             nft_config_table.push((nft, rate));
         }
         NFTConfig {

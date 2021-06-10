@@ -1,41 +1,49 @@
 use ckb_types::{
     bytes::Bytes, prelude::*, H256, core::TransactionView,
     packed::{
-        self, WitnessArgs, Byte32
+        self, WitnessArgs, Byte32, CellOutput
     }
 };
 use ckb_hash::new_blake2b;
 use ckb_crypto::secp::Privkey;
 use crate::ckb::transaction::helper;
 
-// sign a whole [tx] with private [key], the [extra_witnesses] is some external args which just placed into witness part
-pub async fn sign(tx: TransactionView, key: &Privkey, extra_witnesses: Vec<WitnessArgs>) -> TransactionView {
-    let futures = tx
+// sign a whole [tx] using private [key], the [extra_witnesses] is some external args which just placed into witness part
+// the function just supposes two or more cells that are in one group are all close together
+pub fn sign(
+    tx: TransactionView, key: &Privkey, extra_witnesses: Vec<WitnessArgs>, enable_sign: &dyn Fn(&CellOutput) -> bool
+) -> TransactionView {
+    let inputs = tx
         .inputs()
         .into_iter()
-        .map(|input| helper::outpoint_to_output(input.previous_output()))
+        .map(|input| helper::outpoint_to_output(input.previous_output()).expect("sign"))
         .collect::<Vec<_>>();
-    let mut inputs = vec![];
-    for input in futures {
-        inputs.push(input.await.expect("get output before sign"));
-    }
     let mut last_lockhash = Byte32::new([0u8; 32]);
     let mut signed_witnesses = inputs
         .iter()
         .enumerate()
         .map(|(i, input)| {
-            if input.lock().calc_script_hash() == last_lockhash {
-                Bytes::new().pack()
+            if enable_sign(input) {
+                if input.lock().calc_script_hash() == last_lockhash {
+                    Bytes::new().pack()
+                } else {
+                    let witness = {
+                        if let Some(witness) = tx.witnesses().get(i) {
+                            let witness: Bytes = witness.unpack();
+                            WitnessArgs::from_slice(witness.to_vec().as_slice()).unwrap_or_default()
+                        } else {
+                            WitnessArgs::default()
+                        }
+                    };
+                    last_lockhash = input.lock().calc_script_hash();
+                    sign_input(&tx, key, &witness, &extra_witnesses)
+                }
             } else {
-                let witness = {
-                    if let Some(witness) = tx.witnesses().get(i) {
-                        WitnessArgs::new_unchecked(witness.unpack())
-                    } else {
-                        WitnessArgs::default()
-                    }
-                };
-                last_lockhash = input.lock().calc_script_hash();
-                sign_input(&tx, key, &witness, &extra_witnesses)
+                if let Some(witness) = tx.witnesses().get(i) {
+                    witness
+                } else {
+                    Bytes::new().pack()
+                }
             }
         })
         .collect::<Vec<_>>();
@@ -44,8 +52,7 @@ pub async fn sign(tx: TransactionView, key: &Privkey, extra_witnesses: Vec<Witne
         .map(|witness| witness.as_bytes().pack())
         .collect::<Vec<_>>();
     signed_witnesses.append(&mut extra_witnesses);
-    return tx
-        .as_advanced_builder()
+    tx.as_advanced_builder()
         .set_witnesses(signed_witnesses)
         .build()
 }

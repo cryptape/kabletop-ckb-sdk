@@ -25,14 +25,11 @@ pub struct Vars {
 
 // ckb types format from string format "Kabletop.toml" config file
 pub mod ckb {
-    use std::convert::{
-        From, TryInto
-    };
+    use std::convert::From;
     use crate::{
         config::types as conf, ckb::transaction::helper
     };
     use ckb_crypto::secp::Privkey;
-    use ckb_hash::new_blake2b;
     use ckb_types::{
         packed::Byte32, H256
     };
@@ -63,16 +60,13 @@ pub mod ckb {
     }
 
     fn privkey_to_keypair(privkey: &str) -> Keypair {
-        let privkey = helper::blake256_to_byte32(privkey).expect("blake2b_256 to [u8; 32]");
-        let privkey = Privkey::from(H256(privkey));
-        let pubkey = privkey.pubkey().expect("private key to public key");
-        let mut hasher = new_blake2b();
-        hasher.update(pubkey.serialize().as_slice());
-        let mut pubkey_hash = [0u8; 32];
-        hasher.finalize(&mut pubkey_hash);
+        let privkey = {
+            let byte32 = helper::blake256_to_byte32(privkey).expect("blake2b_256 to [u8; 32]");
+            Privkey::from(H256(byte32))
+        };
         Keypair {
-            privkey: privkey,
-            pubhash: pubkey_hash[..20].try_into().unwrap()
+            pubhash: helper::privkey_to_pkhash(&privkey),
+            privkey: privkey
         }
     }
 

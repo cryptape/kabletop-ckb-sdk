@@ -15,7 +15,7 @@ use anyhow::{
 };
 use crate::{
     ckb::rpc::types::{
-        Tip, Pagination, Cell, SearchKey, Order, ckb
+        Pagination, Cell, SearchKey, Order, ckb
     },
     config::VARS as _C,
 };
@@ -44,14 +44,14 @@ pub fn get_block(block_number: u64) -> Result<Block> {
             None
         });
     let block = {
-        let genesis = block.ok_or_else(|| anyhow!(format!("block #{} is non-existent", block_number)))?;
+        let genesis = block.ok_or(anyhow!(format!("block #{} is non-existent", block_number)))?;
         let block: BlockView = genesis.into();
         Block::new_unchecked(block.data().as_bytes())
     };
     Ok(block)
 }
 
-pub async fn get_transaction(tx_hash: Byte32) -> Result<Transaction> {
+pub fn get_transaction(tx_hash: Byte32) -> Result<Transaction> {
     let tx = CKB_CLIENT
         .lock()
         .unwrap()
@@ -60,7 +60,7 @@ pub async fn get_transaction(tx_hash: Byte32) -> Result<Transaction> {
             eprintln!("{}", err);
             None
         });
-    let tx = tx.ok_or_else(|| anyhow!("tx is non-existent"))?;
+    let tx = tx.ok_or(anyhow!("tx is non-existent"))?;
     if tx.tx_status.status == Status::Committed {
         Ok(tx.transaction.inner.into())
     } else {
@@ -68,12 +68,14 @@ pub async fn get_transaction(tx_hash: Byte32) -> Result<Transaction> {
     }
 }
 
-pub async fn get_tip_info() -> Result<Tip> {
-    let output = INDEXER_CLIENT.request("get_tip", None).await?;
-    match output {
-        Output::Success(value) => return Ok(from_value(value.result)?),
-        Output::Failure(err)   => return Err(anyhow!(err))
-    }
+pub fn get_tip_block_number() -> u64 {
+    CKB_CLIENT
+        .lock()
+        .unwrap()
+        .get_tip_block_number()
+        .unwrap_or_else(|err| {
+            panic!("{}", err);
+        })
 }
 
 pub async fn get_live_cells(search_key: SearchKey, limit: u32, cursor: Option<JsonBytes>) -> Result<Pagination<ckb::Cell>> {

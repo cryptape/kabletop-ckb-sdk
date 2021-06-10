@@ -44,12 +44,6 @@ pub struct Pagination<T> {
     pub last_cursor: JsonBytes,
 }
 
-#[derive(Deserialize, Serialize)]
-pub struct Tip {
-    pub block_hash:   String,
-    pub block_number: String
-}
-
 #[derive(Serialize, Deserialize)]
 pub struct Cell {
     pub output:       CellOutput,

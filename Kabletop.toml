@@ -3,6 +3,7 @@ ckb_uri = "http://localhost:8114"
 ckb_indexer_uri = "http://localhost:8116"
 composer_privkey = "8d929e962f940f75aa32054f19a5ea2ce70ae30bfe4ff7cf2dbed70d556265df" # pubkey_hash = "58b85c196e5fe80e25b4dab596e7121d219f79fb"
 user_privkey = "010a51a0fa2260b710624d201ec24124f53ddf0c9abe81448b4b0c89e5a06057" # pubkey_hash = "40e88263ef526a8248570e931cfb2f2fb3ed044f"
+# user_privkey = "d44955b4770247b233c284268c961085e622febb61d364c9a5cabe0c238f08d4"
 
 [nft]
 tx_hash = "41a632a4e101ad47a6271f07b11d2f0e9fad334881dac4078aae48d54ef937b8"
@@ -13,8 +14,8 @@ tx_hash = "f302ff2f4f9cbc89f0e5e44958203912ef2907afde3697acfb3133d3552da538"
 code_hash = "89eab80e842d6937ea5b266828284ab67d4c9a1b66651c5c6ece397bc6c47d0e"
 
 [payment]
-tx_hash = "933d86895efaba8a8edca87ff055adab698e04de0804c7a152f09138f1aa1dfe"
-code_hash = "af2907dcf13c7b60d8924f3cc5eefe9ac05715d52d1d946b80626d7d7185f056"
+tx_hash = "12a8b2b14b00cf4a3dd556ba64130c40eccc891e99a97a203483b80dceae0a63"
+code_hash = "80d351c92602c4ad201d0cad2645ea02c45a026c7d70d92f79399dfaf8540ff4"
 
 [kabletop]
 tx_hash = "5abc7015006ec9d57e955f0181781cd284209e2d5be6235d5381f62f0174919a"
