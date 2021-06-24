@@ -343,6 +343,18 @@ pub async fn build_tx_reveal_nft_package() -> Result<TransactionView> {
     Ok(tx)
 }
 
+/* DISCARD_NFT_CELL
+* 
+* to help discard helpless nfts to save CKB locked by NFT cell
+*/
+pub async fn build_tx_discard_nft(discard_nfts: &Vec<[u8; 20]>) -> Result<TransactionView> {
+    let tx = TransactionBuilder::default().build();
+	let tx = helper::complete_tx_with_nft_cells(tx, &keystore::USER_PUBHASH, &keystore::COMPOSER_PUBHASH, discard_nfts.clone(), true).await?;
+	let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
+	let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![], &|_| true);
+	Ok(tx)
+}
+
 /* CHALLENGE_CELL
 *
 * to help user create a channel challenge tx which will consume previous channel cell no matter it's in original
@@ -510,7 +522,7 @@ pub async fn build_tx_close_channel(
         })
         .collect::<Result<Vec<_>, _>>()?;
     
-    // cloen kabletop channel
+    // close kabletop channel
     let tx = TransactionBuilder::default()
         .input(input.build())
         .outputs(outputs)
@@ -568,7 +580,7 @@ mod test {
 
     #[test]
     fn test_build_tx_compose_nft() {
-        let tx = block_on(builder::build_tx_compose_nft(helper::fee("150").as_u64(), 5, default_nfts())).expect("compose nft");
+        let tx = block_on(builder::build_tx_compose_nft(helper::fee("100").as_u64(), 3, default_nfts())).expect("compose nft");
         send_transaction(tx, "compose_nft");
     }
 
@@ -591,6 +603,13 @@ mod test {
     }
 
     #[test]
+    fn test_build_tx_discard_nft() {
+		let discard = vec![helper::blake160(&[3u8])];
+        let tx = block_on(builder::build_tx_discard_nft(&discard)).expect("discard nft");
+        send_transaction(tx, "discard_nft");
+    }
+
+    #[test]
     fn test_build_tx_open_channel() {
         let user1_privkey = keystore::USER_PRIVKEY.clone();
         let user2_privkey = {
@@ -606,7 +625,6 @@ mod test {
         let deck_size = 1u8;
         let (user1_nfts, user2_nfts) = {
             let nfts = default_nfts().iter().map(|&(nft, _)| nft).collect::<Vec<[u8; 20]>>();
-            // println!("default_nfts = {:?}", nfts.iter().map(|nft| hex::encode(nft)).collect::<Vec<String>>());
             (vec![nfts[1]], vec![nfts[1]])
         };
 
@@ -623,6 +641,11 @@ mod test {
         let tx = interact::sign_channel_tx(tx, staking_ckb, bet_ckb, deck_size, &user1_nfts, &user1_privkey)
             .expect("user1 sign_channel_tx");
 
-        write_tx_to_file(tx, format!("{}.json", "open_channel"));
+        send_transaction(tx, "open_channel");
     }
+
+	#[test]
+	fn test_build_tx_close_channel() {
+		
+	}
 }

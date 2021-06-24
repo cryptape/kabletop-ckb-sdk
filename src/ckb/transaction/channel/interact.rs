@@ -80,7 +80,7 @@ pub async fn prepare_channel_tx(
         .output(output)
         .output_data(Bytes::from(vec![]).pack())
         .build();
-    let tx = helper::complete_tx_with_nft_cells(tx, pkhash, &keystore::COMPOSER_PUBHASH, nfts.clone()).await?;
+    let tx = helper::complete_tx_with_nft_cells(tx, pkhash, &keystore::COMPOSER_PUBHASH, nfts.clone(), false).await?;
     let tx = helper::complete_tx_with_sighash_cells(tx, pkhash, helper::fee("0.05")).await?;
     let tx = helper::add_code_celldep(tx, OutPoint::new(_C.kabletop.tx_hash.clone(), 0));
 
@@ -132,7 +132,7 @@ pub async fn complete_channel_tx(
         .as_advanced_builder()
         .set_outputs(tx_outputs)
         .build();
-    let tx = helper::complete_tx_with_nft_cells(tx, pkhash, &keystore::COMPOSER_PUBHASH, nfts.clone()).await?;
+    let tx = helper::complete_tx_with_nft_cells(tx, pkhash, &keystore::COMPOSER_PUBHASH, nfts.clone(), false).await?;
     let tx = helper::complete_tx_with_sighash_cells(tx, pkhash, helper::fee("0.05")).await?;
 
     Ok(tx)
@@ -206,8 +206,8 @@ pub fn sign_channel_tx(
     }
 
     // sign tx
-    let tx = signer::sign(tx, &privkey, vec![], &|output| {
-        let bytes: Bytes = output.lock().args().unpack();
+    let tx = signer::sign(tx, &privkey, vec![], &|input| {
+        let bytes: Bytes = input.lock().args().unpack();
         bytes.to_vec() == pkhash
     });
     Ok(tx)

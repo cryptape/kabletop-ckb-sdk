@@ -10,14 +10,17 @@ use ckb_types::{
 use anyhow::{
     Result, anyhow
 };
-use crate::ckb::{
-    transaction::genesis::GENESIS as _G,
-    rpc::{
-        methods as rpc,
-        types::{
-            ScriptType, SearchKey
-        }
-    }
+use crate::{
+	config::VARS as _C,
+	ckb::{
+		transaction::genesis::GENESIS as _G,
+		rpc::{
+			methods as rpc,
+			types::{
+				ScriptType, SearchKey
+			}
+		}
+	}
 };
 use super::utils::*;
 
@@ -152,11 +155,11 @@ pub async fn complete_tx_with_sighash_cells(tx: TransactionView, pubkey_hash: &[
 }
 
 // collect and apply nft cells locked by [pubkey_hash] to [tx], the APPLY means put collected nft cells into input part
-// and transfer them all into output part, the tx won't obtain any of nft cells
+// and transfer them all into output part, the tx won't obtain any nft cells if [destory] is false
 //
 // all nft cells are collected by [nfts]
 pub async fn complete_tx_with_nft_cells(
-    tx: TransactionView, user_pkhash: &[u8; 20], composer_pkhash: &[u8; 20], mut required_nfts: Vec<[u8; 20]>
+    tx: TransactionView, user_pkhash: &[u8; 20], composer_pkhash: &[u8; 20], mut required_nfts: Vec<[u8; 20]>, discard: bool
 ) -> Result<TransactionView> {
     let lock_script = sighash_script(&user_pkhash[..]);
     let type_script = {
@@ -176,7 +179,6 @@ pub async fn complete_tx_with_nft_cells(
             .iter()
             .filter(|cell| {
                 let mut data = cell.output_data.to_vec();
-                tx_output_data.append(&mut data.clone());
                 let mut nft = [0u8; 20];
                 let mut nfts = vec![];
                 let n = data.len() / 20;
@@ -185,10 +187,21 @@ pub async fn complete_tx_with_nft_cells(
                     data = data[20..].to_vec();
                     nfts.push(nft);
                 }
-                // println!("cell_nfts = {:?}", nfts.iter().map(|nft| hex::encode(nft)).collect::<Vec<String>>());
                 let ckb: Capacity = cell.output.capacity().unpack();
                 capacity += ckb.as_u64();
-                blake160_intersect(&mut nfts, &mut required_nfts).len() > 0
+				let mut intersected = false;
+				if blake160_intersect(&mut nfts, &mut required_nfts).len() > 0 {
+					// check whether destory shared nfts
+					if discard {
+						data = vec![];
+						nfts.iter().for_each(|nft| data.append(&mut nft.to_vec()));
+					} else {
+						data = cell.output_data.to_vec();
+					}
+					tx_output_data.append(&mut data);
+					intersected = true;
+				}
+				intersected
             })
             .map(|cell| {
                 CellInput::new_builder()
@@ -220,5 +233,6 @@ pub async fn complete_tx_with_nft_cells(
         .output(tx_output)
         .output_data(Bytes::from(tx_output_data).pack())
         .build();
+    let tx = add_code_celldep(tx, OutPoint::new(_C.nft.tx_hash.clone(), 0));
     Ok(tx)
 }
