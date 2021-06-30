@@ -19,7 +19,7 @@ use ckb_types::{
         Capacity, TransactionBuilder, TransactionView
     },
     packed::{
-        CellOutput, OutPoint
+        CellOutput, OutPoint, Byte32
     }
 };
 use molecule::{
@@ -206,7 +206,7 @@ pub fn sign_channel_tx(
     }
 
     // sign tx
-    let tx = signer::sign(tx, &privkey, vec![], &|input| {
+    let tx = signer::sign(tx, &privkey, &vec![], &|input| {
         let bytes: Bytes = input.lock().args().unpack();
         bytes.to_vec() == pkhash
     });
@@ -249,7 +249,7 @@ pub fn check_channel_round(
 
 // sign the new [unsiged_round] using [privkey]
 pub fn sign_channel_round(
-    script_hash: &[u8; 32], capacity: u64, previous_rounds: &Vec<(Round, Signature)>, unsiged_round: &Round, privkey: &Privkey
+    script_hash: Byte32, capacity: u64, previous_rounds: &Vec<(Round, Signature)>, unsiged_round: &Round, privkey: &Privkey
 ) -> Result<Signature> {
     let rounds_with_lastone_unsigned = {
         let mut rounds = previous_rounds.clone();
@@ -267,7 +267,7 @@ pub fn sign_channel_round(
                 hasher.update(&digest);
                 hasher.update(&last_signature.serialize());
             } else {
-                hasher.update(script_hash);
+                hasher.update(&script_hash.raw_data());
                 hasher.update(&capacity.to_le_bytes());
             }
             hasher.update(round.as_slice());

@@ -1,19 +1,14 @@
+
 array uint8_t  [byte; 1];
-array uint16_t [byte; 2];
 array uint64_t [byte; 8];
 array blake160 [byte; 20];
 array blake256 [byte; 32];
 array witness  [byte; 65];
 
-table NFTRate {
-    nft:  blake160,
-    rate: uint16_t,
-}
+vector nfts <blake160>;
+vector bytes <byte>;
 
-vector nfts         <blake160>;
-vector bytes        <byte>;
-vector Operations   <bytes>;
-vector NFTRateTable <NFTRate>;
+vector Operations <bytes>;
 
 table Round {
     user_type:  uint8_t,
@@ -35,10 +30,4 @@ table Challenge {
     round_offset: uint8_t,
     signature:    witness,
     round:        Round,
-}
-
-table NFTConfig {
-    package_price:    uint64_t,
-    package_capacity: uint8_t,
-    nft_rate_table:   NFTRateTable,
 }

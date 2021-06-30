@@ -88,7 +88,7 @@ pub async fn build_tx_compose_nft(
     let tx = helper::add_code_celldep(tx, OutPoint::new(_C.wallet.tx_hash.clone(), 0));
 
     // sign tx
-    let tx = signer::sign(tx, &keystore::COMPOSER_PRIVKEY, vec![], &|_| true);
+    let tx = signer::sign(tx, &keystore::COMPOSER_PRIVKEY, &vec![], &|_| true);
     Ok(tx)
 }
 
@@ -155,7 +155,7 @@ pub async fn build_tx_create_nft_store() -> Result<TransactionView> {
     let tx = helper::add_code_celldep(tx, config_cell[0].out_point.clone());
 
     // sign tx
-    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![], &|_| true);
+    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, &vec![], &|_| true);
     Ok(tx)
 }
 
@@ -236,7 +236,7 @@ pub async fn build_tx_purchase_nft_package(package_count: u8) -> Result<Transact
     let tx = helper::add_code_celldep(tx, config_cell[0].out_point.clone());
 
     // sign tx
-    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![], &|_| true);
+    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, &vec![], &|_| true);
     Ok(tx)
 }
 
@@ -339,7 +339,7 @@ pub async fn build_tx_reveal_nft_package() -> Result<TransactionView> {
     let tx = helper::add_headerdep(tx, block.header());
 
     // sign tx
-    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![], &|_| true);
+    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, &vec![], &|_| true);
     Ok(tx)
 }
 
@@ -351,7 +351,7 @@ pub async fn build_tx_discard_nft(discard_nfts: &Vec<[u8; 20]>) -> Result<Transa
     let tx = TransactionBuilder::default().build();
 	let tx = helper::complete_tx_with_nft_cells(tx, &keystore::USER_PUBHASH, &keystore::COMPOSER_PUBHASH, discard_nfts.clone(), true).await?;
 	let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
-	let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![], &|_| true);
+	let tx = signer::sign(tx, &keystore::USER_PRIVKEY, &vec![], &|_| true);
 	Ok(tx)
 }
 
@@ -397,7 +397,7 @@ pub async fn build_tx_challenge_channel(
         .build();
     let output = CellOutput::new_builder()
         .lock(channel_script)
-        .build_exact_capacity(Capacity::shannons(challenge_data.as_slice().len() as u64))?;
+        .build_exact_capacity(Capacity::bytes(challenge_data.as_slice().len())?)?;
     let witnesses = rounds
         .iter()
         .map(|(round, signature)| {
@@ -415,7 +415,8 @@ pub async fn build_tx_challenge_channel(
         .output_data(Bytes::from(challenge_data.as_slice().to_vec()).pack())
         .build();
     let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
-    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, witnesses, &|_| true);
+    let tx = helper::add_code_celldep(tx, OutPoint::new(_C.kabletop.tx_hash.clone(), 0));
+    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, &witnesses, &|_| true);
 
     Ok(tx)
 }
@@ -529,7 +530,8 @@ pub async fn build_tx_close_channel(
         .outputs_data(vec![Bytes::default(), Bytes::default()].pack())
         .build();
     let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
-    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, witnesses, &|_| true);
+    let tx = helper::add_code_celldep(tx, OutPoint::new(_C.kabletop.tx_hash.clone(), 0));
+    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, &witnesses, &|_| true);
 
     Ok(tx)
 }
@@ -546,11 +548,15 @@ mod test {
     use ckb_jsonrpc_types::TransactionView as JsonTxView;
     use ckb_crypto::secp::Privkey;
     use crate::{
-        config::VARS as _C, ckb::wallet::keystore,
+        config::VARS as _C,
+		ckb::wallet::keystore,
         ckb::transaction::{
-            builder, helper, channel::interact
+            builder, helper, channel::interact, channel::protocol
         }
     };
+	use molecule::prelude::{
+		Entity as MolEntity, Builder as MolBuilder
+	};
 
     fn default_nfts() -> Vec<([u8; 20], u8)> {
         vec![
@@ -577,6 +583,20 @@ mod test {
         let json = serde_json::to_string_pretty(&tx).expect("jsonify");
         std::fs::write(path, json).expect("write json file");
     }
+
+	fn round(user_type: &u8, operations: &Vec<&str>) -> protocol::Round {
+		let operations = operations
+			.iter()
+			.map(|&bytes| bytes.as_bytes().into())
+			.collect::<Vec<protocol::Bytes>>();
+		let operations = protocol::Operations::new_builder()
+			.set(operations)
+			.build();
+		protocol::Round::new_builder()
+			.user_type(user_type.into())
+			.operations(operations)
+			.build()
+	}
 
     #[test]
     fn test_build_tx_compose_nft() {
@@ -646,6 +666,103 @@ mod test {
 
 	#[test]
 	fn test_build_tx_close_channel() {
+		// prepare kabletop script
+		let channel_tx = std::fs::read("./open_channel.json").expect("no open_channel.json file");
+		let tx: JsonTxView = serde_json::from_slice(&channel_tx[..]).expect("json deser tx");
+		let script = helper::kabletop_script(tx.inner.outputs[0].lock.args.as_bytes().to_vec());
+		let ckb: u64 = tx.inner.outputs[0].capacity.into();
+
+		// prepare rounds witness
+        let user1_privkey = keystore::USER_PRIVKEY.clone();
+        let user2_privkey = {
+            let byte32 = helper::blake256_to_byte32("d44955b4770247b233c284268c961085e622febb61d364c9a5cabe0c238f08d4")
+                .expect("blake2b_256 to [u8; 32]");
+            Privkey::from(ckb_types::H256(byte32))
+        };
+		let mut previous_rounds = vec![];
+		vec![
+			(1u8, vec!["print('用户1的回合：')", 
+					   "print('1.抽牌')",
+					   "print('2.回合结束')"]),
+			(2u8, vec!["print('用户2的回合：')", 
+					   "print('1.抽牌')",
+					   "print('2.回合结束')"]),
+			(1u8, vec!["print('用户1的回合：')",
+					   "print('1.回合结束')"]),
+			(2u8, vec!["print('用户2的回合：')",
+					   "print('1.认输')",
+					   "print('2.回合结束')",
+					   "set_winner(1)"])
+		]
+		.iter()
+		.for_each(|(user_type, operations)| {
+			let round = round(user_type, operations);
+			let signature = match user_type {
+				1 => interact::sign_channel_round(script.calc_script_hash(), ckb, &previous_rounds, &round, &user2_privkey),
+				2 => interact::sign_channel_round(script.calc_script_hash(), ckb, &previous_rounds, &round, &user1_privkey),
+				_ => panic!("unknown user type")
+			};
+			previous_rounds.push((round, signature.unwrap()));
+		});
 		
+		// prepare tx
+		let tx = block_on(builder::build_tx_close_channel(script, &previous_rounds, 1, false)).expect("close channel");
+		send_transaction(tx, "close_channel");
+	}
+
+	#[test]
+	fn test_build_tx_challenge_channel() {
+		// prepare kabletop script
+		let channel_tx = std::fs::read("./open_channel.json").expect("no open_channel.json file");
+		let tx: JsonTxView = serde_json::from_slice(&channel_tx[..]).expect("json deser tx");
+		let script = helper::kabletop_script(tx.inner.outputs[0].lock.args.as_bytes().to_vec());
+		let ckb: u64 = tx.inner.outputs[0].capacity.into();
+
+		// prepare rounds witness
+        let user1_privkey = keystore::USER_PRIVKEY.clone();
+        let user2_privkey = {
+            let byte32 = helper::blake256_to_byte32("d44955b4770247b233c284268c961085e622febb61d364c9a5cabe0c238f08d4")
+                .expect("blake2b_256 to [u8; 32]");
+            Privkey::from(ckb_types::H256(byte32))
+        };
+		let mut previous_rounds = vec![];
+		vec![
+			(1u8, vec!["print('用户1的回合：')", 
+					   "print('1.抽牌')",
+					   "print('2.回合结束')"]),
+			(2u8, vec!["print('用户2的回合：')", 
+					   "print('1.抽牌')",
+					   "print('2.回合结束')"]),
+			(1u8, vec!["print('用户1的回合：')",
+					   "spell('用户1', '用户2', '36248218d2808d668ae3c0d35990c12712f6b9d2')",
+					   "print('2.回合结束')"]),
+			(2u8, vec!["print('用户2的回合：')",
+					   "print('1.认输')",
+					   "print('2.回合结束')"])
+		]
+		.iter()
+		.for_each(|(user_type, operations)| {
+			let round = round(user_type, operations);
+			let signature = match user_type {
+				1 => interact::sign_channel_round(script.calc_script_hash(), ckb, &previous_rounds, &round, &user2_privkey),
+				2 => interact::sign_channel_round(script.calc_script_hash(), ckb, &previous_rounds, &round, &user1_privkey),
+				_ => panic!("unknown user type")
+			};
+			previous_rounds.push((round, signature.unwrap()));
+		});
+
+		// prepare challenge data
+		let last_round = previous_rounds.last().ok_or_else(|| panic!("empty rounds data")).unwrap();
+		let mut signature = [0u8; 65];
+		signature.copy_from_slice(last_round.1.serialize().as_slice());
+		let challenge = protocol::Challenge::new_builder()
+			.round_offset(((previous_rounds.len() - 1) as u8).into())
+			.signature(signature.into())
+			.round(last_round.0.clone())
+			.build();
+
+		// prepare tx
+		let tx = block_on(builder::build_tx_challenge_channel(script, challenge, &previous_rounds)).expect("challenge channel");
+		send_transaction(tx, "challenge_channel");
 	}
 }

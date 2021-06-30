@@ -2,24 +2,52 @@ use molecule::{
     prelude::*, bytes::Bytes
 };
 use ckb_types::packed::Byte32;
-use super::protocol::*;
+use super::protocol::{
+	*, self
+};
 
 ///////////////////////////////////////////
 /// Into Functions
 /////////////////////////////////////////// 
 
-impl Into<Uint64T> for u64 {
+impl Into<Uint64T> for &u64 {
     fn into(self) -> Uint64T {
         let bytes = Bytes::from(self.to_le_bytes().to_vec());
         Uint64T::new_unchecked(bytes)
     }
 }
 
-impl Into<Uint8T> for u8 {
+impl Into<Uint64T> for u64 {
+    fn into(self) -> Uint64T {
+		(&self).into()
+    }
+}
+
+impl Into<Uint8T> for &u8 {
     fn into(self) -> Uint8T {
-        let bytes = Bytes::from(vec![self]);
+        let bytes = Bytes::from(vec![self.clone()]);
         Uint8T::new_unchecked(bytes)
     }
+}
+
+
+impl Into<Uint8T> for u8 {
+    fn into(self) -> Uint8T {
+		(&self).into()
+    }
+}
+
+impl Into<protocol::Bytes> for &[u8] {
+	fn into(self) -> protocol::Bytes {
+		let bytes = self
+			.to_vec()
+			.iter()
+			.map(|byte| Byte::new(byte.clone()))
+			.collect::<Vec<Byte>>();
+		protocol::Bytes::new_builder()
+			.set(bytes)
+			.build()
+	}
 }
 
 impl Into<Blake256> for &Byte32 {
@@ -46,6 +74,22 @@ impl Into<Blake160> for [u8; 20] {
     fn into(self) -> Blake160 {
         (&self).into()
     }
+}
+
+impl Into<protocol::Witness> for &[u8; 65] {
+	fn into(self) -> protocol::Witness {
+		let mut bytes: [Byte; 65] = [Byte::default(); 65];
+		for i in 0..65 {
+			bytes[i] = Byte::from(self[i]);
+		}
+		protocol::WitnessBuilder::default().set(bytes).build()
+	}
+}
+
+impl Into<protocol::Witness> for [u8; 65] {
+	fn into(self) -> protocol::Witness {
+		(&self).into()
+	}
 }
 
 impl Into<Nfts> for &Vec<[u8; 20]> {
