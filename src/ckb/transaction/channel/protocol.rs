@@ -2921,6 +2921,272 @@ impl ::core::iter::IntoIterator for Bytes {
     }
 }
 #[derive(Clone)]
+pub struct Hashes(molecule::bytes::Bytes);
+impl ::core::fmt::LowerHex for Hashes {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+        use molecule::hex_string;
+        if f.alternate() {
+            write!(f, "0x")?;
+        }
+        write!(f, "{}", hex_string(self.as_slice()))
+    }
+}
+impl ::core::fmt::Debug for Hashes {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+        write!(f, "{}({:#x})", Self::NAME, self)
+    }
+}
+impl ::core::fmt::Display for Hashes {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+        write!(f, "{} [", Self::NAME)?;
+        for i in 0..self.len() {
+            if i == 0 {
+                write!(f, "{}", self.get_unchecked(i))?;
+            } else {
+                write!(f, ", {}", self.get_unchecked(i))?;
+            }
+        }
+        write!(f, "]")
+    }
+}
+impl ::core::default::Default for Hashes {
+    fn default() -> Self {
+        let v: Vec<u8> = vec![0, 0, 0, 0];
+        Hashes::new_unchecked(v.into())
+    }
+}
+impl Hashes {
+    pub const ITEM_SIZE: usize = 32;
+    pub fn total_size(&self) -> usize {
+        molecule::NUMBER_SIZE * (self.item_count() + 1)
+    }
+    pub fn item_count(&self) -> usize {
+        molecule::unpack_number(self.as_slice()) as usize
+    }
+    pub fn len(&self) -> usize {
+        self.item_count()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    pub fn get(&self, idx: usize) -> Option<Blake256> {
+        if idx >= self.len() {
+            None
+        } else {
+            Some(self.get_unchecked(idx))
+        }
+    }
+    pub fn get_unchecked(&self, idx: usize) -> Blake256 {
+        let start = molecule::NUMBER_SIZE + Self::ITEM_SIZE * idx;
+        let end = start + Self::ITEM_SIZE;
+        Blake256::new_unchecked(self.0.slice(start..end))
+    }
+    pub fn as_reader<'r>(&'r self) -> HashesReader<'r> {
+        HashesReader::new_unchecked(self.as_slice())
+    }
+}
+impl molecule::prelude::Entity for Hashes {
+    type Builder = HashesBuilder;
+    const NAME: &'static str = "Hashes";
+    fn new_unchecked(data: molecule::bytes::Bytes) -> Self {
+        Hashes(data)
+    }
+    fn as_bytes(&self) -> molecule::bytes::Bytes {
+        self.0.clone()
+    }
+    fn as_slice(&self) -> &[u8] {
+        &self.0[..]
+    }
+    fn from_slice(slice: &[u8]) -> molecule::error::VerificationResult<Self> {
+        HashesReader::from_slice(slice).map(|reader| reader.to_entity())
+    }
+    fn from_compatible_slice(slice: &[u8]) -> molecule::error::VerificationResult<Self> {
+        HashesReader::from_compatible_slice(slice).map(|reader| reader.to_entity())
+    }
+    fn new_builder() -> Self::Builder {
+        ::core::default::Default::default()
+    }
+    fn as_builder(self) -> Self::Builder {
+        Self::new_builder().extend(self.into_iter())
+    }
+}
+#[derive(Clone, Copy)]
+pub struct HashesReader<'r>(&'r [u8]);
+impl<'r> ::core::fmt::LowerHex for HashesReader<'r> {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+        use molecule::hex_string;
+        if f.alternate() {
+            write!(f, "0x")?;
+        }
+        write!(f, "{}", hex_string(self.as_slice()))
+    }
+}
+impl<'r> ::core::fmt::Debug for HashesReader<'r> {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+        write!(f, "{}({:#x})", Self::NAME, self)
+    }
+}
+impl<'r> ::core::fmt::Display for HashesReader<'r> {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+        write!(f, "{} [", Self::NAME)?;
+        for i in 0..self.len() {
+            if i == 0 {
+                write!(f, "{}", self.get_unchecked(i))?;
+            } else {
+                write!(f, ", {}", self.get_unchecked(i))?;
+            }
+        }
+        write!(f, "]")
+    }
+}
+impl<'r> HashesReader<'r> {
+    pub const ITEM_SIZE: usize = 32;
+    pub fn total_size(&self) -> usize {
+        molecule::NUMBER_SIZE * (self.item_count() + 1)
+    }
+    pub fn item_count(&self) -> usize {
+        molecule::unpack_number(self.as_slice()) as usize
+    }
+    pub fn len(&self) -> usize {
+        self.item_count()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    pub fn get(&self, idx: usize) -> Option<Blake256Reader<'r>> {
+        if idx >= self.len() {
+            None
+        } else {
+            Some(self.get_unchecked(idx))
+        }
+    }
+    pub fn get_unchecked(&self, idx: usize) -> Blake256Reader<'r> {
+        let start = molecule::NUMBER_SIZE + Self::ITEM_SIZE * idx;
+        let end = start + Self::ITEM_SIZE;
+        Blake256Reader::new_unchecked(&self.as_slice()[start..end])
+    }
+}
+impl<'r> molecule::prelude::Reader<'r> for HashesReader<'r> {
+    type Entity = Hashes;
+    const NAME: &'static str = "HashesReader";
+    fn to_entity(&self) -> Self::Entity {
+        Self::Entity::new_unchecked(self.as_slice().to_owned().into())
+    }
+    fn new_unchecked(slice: &'r [u8]) -> Self {
+        HashesReader(slice)
+    }
+    fn as_slice(&self) -> &'r [u8] {
+        self.0
+    }
+    fn verify(slice: &[u8], _compatible: bool) -> molecule::error::VerificationResult<()> {
+        use molecule::verification_error as ve;
+        let slice_len = slice.len();
+        if slice_len < molecule::NUMBER_SIZE {
+            return ve!(Self, HeaderIsBroken, molecule::NUMBER_SIZE, slice_len);
+        }
+        let item_count = molecule::unpack_number(slice) as usize;
+        if item_count == 0 {
+            if slice_len != molecule::NUMBER_SIZE {
+                return ve!(Self, TotalSizeNotMatch, molecule::NUMBER_SIZE, slice_len);
+            }
+            return Ok(());
+        }
+        let total_size = molecule::NUMBER_SIZE + Self::ITEM_SIZE * item_count;
+        if slice_len != total_size {
+            return ve!(Self, TotalSizeNotMatch, total_size, slice_len);
+        }
+        Ok(())
+    }
+}
+#[derive(Debug, Default)]
+pub struct HashesBuilder(pub(crate) Vec<Blake256>);
+impl HashesBuilder {
+    pub const ITEM_SIZE: usize = 32;
+    pub fn set(mut self, v: Vec<Blake256>) -> Self {
+        self.0 = v;
+        self
+    }
+    pub fn push(mut self, v: Blake256) -> Self {
+        self.0.push(v);
+        self
+    }
+    pub fn extend<T: ::core::iter::IntoIterator<Item = Blake256>>(mut self, iter: T) -> Self {
+        for elem in iter {
+            self.0.push(elem);
+        }
+        self
+    }
+}
+impl molecule::prelude::Builder for HashesBuilder {
+    type Entity = Hashes;
+    const NAME: &'static str = "HashesBuilder";
+    fn expected_length(&self) -> usize {
+        molecule::NUMBER_SIZE + Self::ITEM_SIZE * self.0.len()
+    }
+    fn write<W: ::molecule::io::Write>(&self, writer: &mut W) -> ::molecule::io::Result<()> {
+        writer.write_all(&molecule::pack_number(self.0.len() as molecule::Number))?;
+        for inner in &self.0[..] {
+            writer.write_all(inner.as_slice())?;
+        }
+        Ok(())
+    }
+    fn build(&self) -> Self::Entity {
+        let mut inner = Vec::with_capacity(self.expected_length());
+        self.write(&mut inner)
+            .unwrap_or_else(|_| panic!("{} build should be ok", Self::NAME));
+        Hashes::new_unchecked(inner.into())
+    }
+}
+pub struct HashesIterator(Hashes, usize, usize);
+impl ::core::iter::Iterator for HashesIterator {
+    type Item = Blake256;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.1 >= self.2 {
+            None
+        } else {
+            let ret = self.0.get_unchecked(self.1);
+            self.1 += 1;
+            Some(ret)
+        }
+    }
+}
+impl ::core::iter::ExactSizeIterator for HashesIterator {
+    fn len(&self) -> usize {
+        self.2 - self.1
+    }
+}
+impl ::core::iter::IntoIterator for Hashes {
+    type Item = Blake256;
+    type IntoIter = HashesIterator;
+    fn into_iter(self) -> Self::IntoIter {
+        let len = self.len();
+        HashesIterator(self, 0, len)
+    }
+}
+impl<'r> HashesReader<'r> {
+    pub fn iter<'t>(&'t self) -> HashesReaderIterator<'t, 'r> {
+        HashesReaderIterator(&self, 0, self.len())
+    }
+}
+pub struct HashesReaderIterator<'t, 'r>(&'t HashesReader<'r>, usize, usize);
+impl<'t: 'r, 'r> ::core::iter::Iterator for HashesReaderIterator<'t, 'r> {
+    type Item = Blake256Reader<'t>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.1 >= self.2 {
+            None
+        } else {
+            let ret = self.0.get_unchecked(self.1);
+            self.1 += 1;
+            Some(ret)
+        }
+    }
+}
+impl<'t: 'r, 'r> ::core::iter::ExactSizeIterator for HashesReaderIterator<'t, 'r> {
+    fn len(&self) -> usize {
+        self.2 - self.1
+    }
+}
+#[derive(Clone)]
 pub struct Operations(molecule::bytes::Bytes);
 impl ::core::fmt::LowerHex for Operations {
     fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
@@ -3539,6 +3805,7 @@ impl ::core::fmt::Display for Args {
         write!(f, ", {}: {}", "user_deck_size", self.user_deck_size())?;
         write!(f, ", {}: {}", "begin_blocknumber", self.begin_blocknumber())?;
         write!(f, ", {}: {}", "lock_code_hash", self.lock_code_hash())?;
+        write!(f, ", {}: {}", "lua_code_hashes", self.lua_code_hashes())?;
         write!(f, ", {}: {}", "user1_pkhash", self.user1_pkhash())?;
         write!(f, ", {}: {}", "user1_nfts", self.user1_nfts())?;
         write!(f, ", {}: {}", "user2_pkhash", self.user2_pkhash())?;
@@ -3553,17 +3820,18 @@ impl ::core::fmt::Display for Args {
 impl ::core::default::Default for Args {
     fn default() -> Self {
         let v: Vec<u8> = vec![
-            133, 0, 0, 0, 36, 0, 0, 0, 44, 0, 0, 0, 45, 0, 0, 0, 53, 0, 0, 0, 85, 0, 0, 0, 105, 0,
-            0, 0, 109, 0, 0, 0, 129, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            141, 0, 0, 0, 40, 0, 0, 0, 48, 0, 0, 0, 49, 0, 0, 0, 57, 0, 0, 0, 89, 0, 0, 0, 93, 0,
+            0, 0, 113, 0, 0, 0, 117, 0, 0, 0, 137, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0,
         ];
         Args::new_unchecked(v.into())
     }
 }
 impl Args {
-    pub const FIELD_COUNT: usize = 8;
+    pub const FIELD_COUNT: usize = 9;
     pub fn total_size(&self) -> usize {
         molecule::unpack_number(self.as_slice()) as usize
     }
@@ -3604,29 +3872,35 @@ impl Args {
         let end = molecule::unpack_number(&slice[20..]) as usize;
         Blake256::new_unchecked(self.0.slice(start..end))
     }
-    pub fn user1_pkhash(&self) -> Blake160 {
+    pub fn lua_code_hashes(&self) -> Hashes {
         let slice = self.as_slice();
         let start = molecule::unpack_number(&slice[20..]) as usize;
         let end = molecule::unpack_number(&slice[24..]) as usize;
+        Hashes::new_unchecked(self.0.slice(start..end))
+    }
+    pub fn user1_pkhash(&self) -> Blake160 {
+        let slice = self.as_slice();
+        let start = molecule::unpack_number(&slice[24..]) as usize;
+        let end = molecule::unpack_number(&slice[28..]) as usize;
         Blake160::new_unchecked(self.0.slice(start..end))
     }
     pub fn user1_nfts(&self) -> Nfts {
         let slice = self.as_slice();
-        let start = molecule::unpack_number(&slice[24..]) as usize;
-        let end = molecule::unpack_number(&slice[28..]) as usize;
+        let start = molecule::unpack_number(&slice[28..]) as usize;
+        let end = molecule::unpack_number(&slice[32..]) as usize;
         Nfts::new_unchecked(self.0.slice(start..end))
     }
     pub fn user2_pkhash(&self) -> Blake160 {
         let slice = self.as_slice();
-        let start = molecule::unpack_number(&slice[28..]) as usize;
-        let end = molecule::unpack_number(&slice[32..]) as usize;
+        let start = molecule::unpack_number(&slice[32..]) as usize;
+        let end = molecule::unpack_number(&slice[36..]) as usize;
         Blake160::new_unchecked(self.0.slice(start..end))
     }
     pub fn user2_nfts(&self) -> Nfts {
         let slice = self.as_slice();
-        let start = molecule::unpack_number(&slice[32..]) as usize;
+        let start = molecule::unpack_number(&slice[36..]) as usize;
         if self.has_extra_fields() {
-            let end = molecule::unpack_number(&slice[36..]) as usize;
+            let end = molecule::unpack_number(&slice[40..]) as usize;
             Nfts::new_unchecked(self.0.slice(start..end))
         } else {
             Nfts::new_unchecked(self.0.slice(start..))
@@ -3663,6 +3937,7 @@ impl molecule::prelude::Entity for Args {
             .user_deck_size(self.user_deck_size())
             .begin_blocknumber(self.begin_blocknumber())
             .lock_code_hash(self.lock_code_hash())
+            .lua_code_hashes(self.lua_code_hashes())
             .user1_pkhash(self.user1_pkhash())
             .user1_nfts(self.user1_nfts())
             .user2_pkhash(self.user2_pkhash())
@@ -3692,6 +3967,7 @@ impl<'r> ::core::fmt::Display for ArgsReader<'r> {
         write!(f, ", {}: {}", "user_deck_size", self.user_deck_size())?;
         write!(f, ", {}: {}", "begin_blocknumber", self.begin_blocknumber())?;
         write!(f, ", {}: {}", "lock_code_hash", self.lock_code_hash())?;
+        write!(f, ", {}: {}", "lua_code_hashes", self.lua_code_hashes())?;
         write!(f, ", {}: {}", "user1_pkhash", self.user1_pkhash())?;
         write!(f, ", {}: {}", "user1_nfts", self.user1_nfts())?;
         write!(f, ", {}: {}", "user2_pkhash", self.user2_pkhash())?;
@@ -3704,7 +3980,7 @@ impl<'r> ::core::fmt::Display for ArgsReader<'r> {
     }
 }
 impl<'r> ArgsReader<'r> {
-    pub const FIELD_COUNT: usize = 8;
+    pub const FIELD_COUNT: usize = 9;
     pub fn total_size(&self) -> usize {
         molecule::unpack_number(self.as_slice()) as usize
     }
@@ -3745,29 +4021,35 @@ impl<'r> ArgsReader<'r> {
         let end = molecule::unpack_number(&slice[20..]) as usize;
         Blake256Reader::new_unchecked(&self.as_slice()[start..end])
     }
-    pub fn user1_pkhash(&self) -> Blake160Reader<'r> {
+    pub fn lua_code_hashes(&self) -> HashesReader<'r> {
         let slice = self.as_slice();
         let start = molecule::unpack_number(&slice[20..]) as usize;
         let end = molecule::unpack_number(&slice[24..]) as usize;
+        HashesReader::new_unchecked(&self.as_slice()[start..end])
+    }
+    pub fn user1_pkhash(&self) -> Blake160Reader<'r> {
+        let slice = self.as_slice();
+        let start = molecule::unpack_number(&slice[24..]) as usize;
+        let end = molecule::unpack_number(&slice[28..]) as usize;
         Blake160Reader::new_unchecked(&self.as_slice()[start..end])
     }
     pub fn user1_nfts(&self) -> NftsReader<'r> {
         let slice = self.as_slice();
-        let start = molecule::unpack_number(&slice[24..]) as usize;
-        let end = molecule::unpack_number(&slice[28..]) as usize;
+        let start = molecule::unpack_number(&slice[28..]) as usize;
+        let end = molecule::unpack_number(&slice[32..]) as usize;
         NftsReader::new_unchecked(&self.as_slice()[start..end])
     }
     pub fn user2_pkhash(&self) -> Blake160Reader<'r> {
         let slice = self.as_slice();
-        let start = molecule::unpack_number(&slice[28..]) as usize;
-        let end = molecule::unpack_number(&slice[32..]) as usize;
+        let start = molecule::unpack_number(&slice[32..]) as usize;
+        let end = molecule::unpack_number(&slice[36..]) as usize;
         Blake160Reader::new_unchecked(&self.as_slice()[start..end])
     }
     pub fn user2_nfts(&self) -> NftsReader<'r> {
         let slice = self.as_slice();
-        let start = molecule::unpack_number(&slice[32..]) as usize;
+        let start = molecule::unpack_number(&slice[36..]) as usize;
         if self.has_extra_fields() {
-            let end = molecule::unpack_number(&slice[36..]) as usize;
+            let end = molecule::unpack_number(&slice[40..]) as usize;
             NftsReader::new_unchecked(&self.as_slice()[start..end])
         } else {
             NftsReader::new_unchecked(&self.as_slice()[start..])
@@ -3827,10 +4109,11 @@ impl<'r> molecule::prelude::Reader<'r> for ArgsReader<'r> {
         Uint8TReader::verify(&slice[offsets[1]..offsets[2]], compatible)?;
         Uint64TReader::verify(&slice[offsets[2]..offsets[3]], compatible)?;
         Blake256Reader::verify(&slice[offsets[3]..offsets[4]], compatible)?;
-        Blake160Reader::verify(&slice[offsets[4]..offsets[5]], compatible)?;
-        NftsReader::verify(&slice[offsets[5]..offsets[6]], compatible)?;
-        Blake160Reader::verify(&slice[offsets[6]..offsets[7]], compatible)?;
-        NftsReader::verify(&slice[offsets[7]..offsets[8]], compatible)?;
+        HashesReader::verify(&slice[offsets[4]..offsets[5]], compatible)?;
+        Blake160Reader::verify(&slice[offsets[5]..offsets[6]], compatible)?;
+        NftsReader::verify(&slice[offsets[6]..offsets[7]], compatible)?;
+        Blake160Reader::verify(&slice[offsets[7]..offsets[8]], compatible)?;
+        NftsReader::verify(&slice[offsets[8]..offsets[9]], compatible)?;
         Ok(())
     }
 }
@@ -3840,13 +4123,14 @@ pub struct ArgsBuilder {
     pub(crate) user_deck_size: Uint8T,
     pub(crate) begin_blocknumber: Uint64T,
     pub(crate) lock_code_hash: Blake256,
+    pub(crate) lua_code_hashes: Hashes,
     pub(crate) user1_pkhash: Blake160,
     pub(crate) user1_nfts: Nfts,
     pub(crate) user2_pkhash: Blake160,
     pub(crate) user2_nfts: Nfts,
 }
 impl ArgsBuilder {
-    pub const FIELD_COUNT: usize = 8;
+    pub const FIELD_COUNT: usize = 9;
     pub fn user_staking_ckb(mut self, v: Uint64T) -> Self {
         self.user_staking_ckb = v;
         self
@@ -3861,6 +4145,10 @@ impl ArgsBuilder {
     }
     pub fn lock_code_hash(mut self, v: Blake256) -> Self {
         self.lock_code_hash = v;
+        self
+    }
+    pub fn lua_code_hashes(mut self, v: Hashes) -> Self {
+        self.lua_code_hashes = v;
         self
     }
     pub fn user1_pkhash(mut self, v: Blake160) -> Self {
@@ -3889,6 +4177,7 @@ impl molecule::prelude::Builder for ArgsBuilder {
             + self.user_deck_size.as_slice().len()
             + self.begin_blocknumber.as_slice().len()
             + self.lock_code_hash.as_slice().len()
+            + self.lua_code_hashes.as_slice().len()
             + self.user1_pkhash.as_slice().len()
             + self.user1_nfts.as_slice().len()
             + self.user2_pkhash.as_slice().len()
@@ -3906,6 +4195,8 @@ impl molecule::prelude::Builder for ArgsBuilder {
         offsets.push(total_size);
         total_size += self.lock_code_hash.as_slice().len();
         offsets.push(total_size);
+        total_size += self.lua_code_hashes.as_slice().len();
+        offsets.push(total_size);
         total_size += self.user1_pkhash.as_slice().len();
         offsets.push(total_size);
         total_size += self.user1_nfts.as_slice().len();
@@ -3921,6 +4212,7 @@ impl molecule::prelude::Builder for ArgsBuilder {
         writer.write_all(self.user_deck_size.as_slice())?;
         writer.write_all(self.begin_blocknumber.as_slice())?;
         writer.write_all(self.lock_code_hash.as_slice())?;
+        writer.write_all(self.lua_code_hashes.as_slice())?;
         writer.write_all(self.user1_pkhash.as_slice())?;
         writer.write_all(self.user1_nfts.as_slice())?;
         writer.write_all(self.user2_pkhash.as_slice())?;

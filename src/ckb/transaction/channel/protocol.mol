@@ -7,7 +7,7 @@ array witness  [byte; 65];
 
 vector nfts <blake160>;
 vector bytes <byte>;
-
+vector Hashes <blake256>;
 vector Operations <bytes>;
 
 table Round {
@@ -20,6 +20,7 @@ table Args {
     user_deck_size:    uint8_t,
     begin_blocknumber: uint64_t,
     lock_code_hash:    blake256,
+	lua_code_hashes:   Hashes,
     user1_pkhash:      blake160,
     user1_nfts:        nfts,
     user2_pkhash:      blake160,

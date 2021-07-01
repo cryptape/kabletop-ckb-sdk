@@ -92,6 +92,29 @@ impl Into<protocol::Witness> for [u8; 65] {
 	}
 }
 
+impl Into<Hashes> for &Vec<Byte32> {
+	fn into(self) -> Hashes {
+		let hash_vec = self
+			.iter()
+			.map(|hash| hash.into())
+			.collect::<Vec<Blake256>>();
+		let mut hashes = Hashes::default();
+		for hash in hash_vec {
+			hashes = hashes
+				.as_builder()
+				.push(hash)
+				.build();
+		}
+		hashes
+	}
+}
+
+impl Into<Hashes> for Vec<Byte32> {
+	fn into(self) -> Hashes {
+		(&self).into()
+	}
+}
+
 impl Into<Nfts> for &Vec<[u8; 20]> {
     fn into(self) -> Nfts {
         let nft_vec = self
@@ -159,6 +182,15 @@ impl From<&Blake256> for Byte32 {
         bytes.copy_from_slice(blake256.raw_data().to_vec().as_slice());
         Self::new(bytes)
     }
+}
+
+impl From<Hashes> for Vec<Byte32> {
+	fn from(hashes: Hashes) -> Self {
+		hashes
+			.into_iter()
+			.map(|hash| hash.into())
+			.collect::<Vec<_>>()
+	}
 }
 
 impl From<Nfts> for Vec<[u8; 20]> {

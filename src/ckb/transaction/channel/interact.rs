@@ -51,7 +51,7 @@ use std::convert::TryInto;
 
 // prepare kabletop tx with user1-part filled
 pub async fn prepare_channel_tx(
-    staking_ckb: u64, bet_ckb: u64, deck_size: u8, nfts: &Vec<[u8; 20]>, pkhash: &[u8; 20]
+    staking_ckb: u64, bet_ckb: u64, deck_size: u8, nfts: &Vec<[u8; 20]>, pkhash: &[u8; 20], hashes: &Vec<Byte32>
 ) -> Result<TransactionView> {
     // prepare lock_args
     let block_number = rpc::get_tip_block_number();
@@ -64,6 +64,7 @@ pub async fn prepare_channel_tx(
         .user_deck_size(deck_size.into())
         .begin_blocknumber(block_number.into())
         .lock_code_hash(sighash_hash.into())
+		.lua_code_hashes(hashes.into())
         .user1_pkhash(pkhash.into())
         .user1_nfts(nfts.into())
         .build();
@@ -89,7 +90,7 @@ pub async fn prepare_channel_tx(
 
 // complete kabeltop tx with user2-part filled
 pub async fn complete_channel_tx(
-    tx: TransactionView, staking_ckb: u64, bet_ckb: u64, deck_size: u8, nfts: &Vec<[u8; 20]>, pkhash: &[u8; 20]
+    tx: TransactionView, staking_ckb: u64, bet_ckb: u64, deck_size: u8, nfts: &Vec<[u8; 20]>, pkhash: &[u8; 20], hashes: &Vec<Byte32>
 ) -> Result<TransactionView> {
     // check and complete kabletop args
     let mut tx_outputs: Vec<CellOutput> = tx.outputs().into_iter().map(|output| output).collect();
@@ -98,8 +99,9 @@ pub async fn complete_channel_tx(
         let args: Bytes = output.lock().args().unpack();
         Args::new_unchecked(MolBytes::from(args.to_vec()))
     };
-    if u64::from(kabletop_args.user_staking_ckb())  != staking_ckb
-        || u8::from(kabletop_args.user_deck_size()) != deck_size {
+    if u64::from(kabletop_args.user_staking_ckb())     != staking_ckb
+        || u8::from(kabletop_args.user_deck_size())    != deck_size 
+		|| &Vec::from(kabletop_args.lua_code_hashes()) != hashes {
         return Err(anyhow!("some of kabletop args mismatched"));
     }
     if deck_size as usize != nfts.len() {
