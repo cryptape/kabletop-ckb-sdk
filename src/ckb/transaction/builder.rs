@@ -382,7 +382,7 @@ pub async fn build_tx_discard_nft(discard_nfts: &Vec<[u8; 20]>) -> Result<Transa
 * ]
 */
 pub async fn build_tx_challenge_channel(
-    channel_script: Script, challenge_data: protocol::Challenge, rounds: &Vec<(protocol::Round, Signature)>
+    channel_script: Script, channel_ckb: u64, challenge_data: protocol::Challenge, rounds: &Vec<(protocol::Round, Signature)>
 ) -> Result<TransactionView> {
     // make sure channel stays open
     let search_key = SearchKey::new(channel_script.clone().into(), ScriptType::Lock);
@@ -395,9 +395,19 @@ pub async fn build_tx_challenge_channel(
     let input = CellInput::new_builder()
         .previous_output(channel_cell[0].out_point.clone())
         .build();
-    let output = CellOutput::new_builder()
-        .lock(channel_script)
-        .build_exact_capacity(Capacity::bytes(challenge_data.as_slice().len())?)?;
+    let output = {
+		let output = CellOutput::new_builder()
+			.lock(channel_script)
+			.build_exact_capacity(Capacity::bytes(challenge_data.as_slice().len())?)?;
+		let minimal_ckb: u64 = output.capacity().unpack();
+		if minimal_ckb > channel_ckb {
+			return Err(anyhow!("needed ckb for challenged channel cell is greator than the original, consider paying more"));
+		}
+		output
+			.as_builder()
+			.capacity(channel_ckb.pack())
+			.build()
+	};
     let witnesses = rounds
         .iter()
         .map(|(round, signature)| {
@@ -667,7 +677,7 @@ mod test {
 	#[test]
 	fn test_build_tx_close_channel() {
 		// prepare kabletop script
-		let channel_tx = std::fs::read("./open_channel.json").expect("no open_channel.json file");
+		let channel_tx = std::fs::read("./challenge_channel.json").expect("no open_channel.json file");
 		let tx: JsonTxView = serde_json::from_slice(&channel_tx[..]).expect("json deser tx");
 		let script = helper::kabletop_script(tx.inner.outputs[0].lock.args.as_bytes().to_vec());
 		let ckb: u64 = tx.inner.outputs[0].capacity.into();
@@ -683,15 +693,20 @@ mod test {
 		vec![
 			(1u8, vec!["print('用户1的回合：')", 
 					   "print('1.抽牌')",
-					   "print('2.回合结束')"]),
+					   "spell('用户1', '用户2', 'b9aaddf96f7f5c742950611835c040af6b7024ad')",
+					   "print('3.回合结束')"]),
 			(2u8, vec!["print('用户2的回合：')", 
 					   "print('1.抽牌')",
-					   "print('2.回合结束')"]),
+					   "spell('用户2', '用户1', '10ad3f5012ce514f409e4da4c011c24a31443488')",
+					   "print('3.回合结束')"]),
 			(1u8, vec!["print('用户1的回合：')",
-					   "print('1.回合结束')"]),
+					   "print('1.抽牌')",
+					   "spell('用户1', '用户2', '36248218d2808d668ae3c0d35990c12712f6b9d2')",
+					   "print('3.回合结束')"]),
 			(2u8, vec!["print('用户2的回合：')",
-					   "print('1.认输')",
-					   "print('2.回合结束')",
+					   "print('1.抽牌')"]),
+			(1u8, vec!["print('用户1的回合：')",
+					   "print('1.赢得胜利')",
 					   "set_winner(1)"])
 		]
 		.iter()
@@ -729,16 +744,18 @@ mod test {
 		vec![
 			(1u8, vec!["print('用户1的回合：')", 
 					   "print('1.抽牌')",
-					   "print('2.回合结束')"]),
+					   "spell('用户1', '用户2', 'b9aaddf96f7f5c742950611835c040af6b7024ad')",
+					   "print('3.回合结束')"]),
 			(2u8, vec!["print('用户2的回合：')", 
 					   "print('1.抽牌')",
-					   "print('2.回合结束')"]),
+					   "spell('用户2', '用户1', '10ad3f5012ce514f409e4da4c011c24a31443488')",
+					   "print('3.回合结束')"]),
 			(1u8, vec!["print('用户1的回合：')",
+					   "print('1.抽牌')",
 					   "spell('用户1', '用户2', '36248218d2808d668ae3c0d35990c12712f6b9d2')",
-					   "print('2.回合结束')"]),
+					   "print('3.回合结束')"]),
 			(2u8, vec!["print('用户2的回合：')",
-					   "print('1.认输')",
-					   "print('2.回合结束')"])
+					   "print('1.抽牌')"])
 		]
 		.iter()
 		.for_each(|(user_type, operations)| {
@@ -762,7 +779,7 @@ mod test {
 			.build();
 
 		// prepare tx
-		let tx = block_on(builder::build_tx_challenge_channel(script, challenge, &previous_rounds)).expect("challenge channel");
+		let tx = block_on(builder::build_tx_challenge_channel(script, ckb, challenge, &previous_rounds)).expect("challenge channel");
 		send_transaction(tx, "challenge_channel");
 	}
 }
