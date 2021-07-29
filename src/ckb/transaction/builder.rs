@@ -659,10 +659,10 @@ mod test {
         };
 
         // user1 prepare
-        let tx = block_on(interact::prepare_channel_tx(staking_ckb, bet_ckb, deck_size, &user1_nfts, &user1_pkhash, vec![]))
+        let tx = block_on(interact::prepare_channel_tx(staking_ckb, bet_ckb, deck_size, &user1_nfts, &user1_pkhash, &vec![]))
             .expect("prepare_channel_tx");
         // user2 complete
-        let tx = block_on(interact::complete_channel_tx(tx, staking_ckb, bet_ckb, deck_size, &user2_nfts, &user2_pkhash, vec![]))
+        let tx = block_on(interact::complete_channel_tx(tx, staking_ckb, bet_ckb, deck_size, &user2_nfts, &user2_pkhash, &vec![]))
             .expect("complete_channel_tx");
         // user2 sign
         let tx = interact::sign_channel_tx(tx, staking_ckb, bet_ckb, deck_size, &user2_nfts, &user2_privkey)
