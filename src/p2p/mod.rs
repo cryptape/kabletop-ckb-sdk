@@ -18,6 +18,7 @@ mod test {
 	use jsonrpc_ws_server::jsonrpc_core::{
 		Error, Params
 	};
+	use futures::future::Ready;
 
 	#[derive(Serialize)]
 	struct Request {
@@ -31,7 +32,7 @@ mod test {
 
 	#[test]
 	fn test_jsonrpc() {
-		let greetings = |params: Params| {
+		let greetings = |params: Params| -> Ready<Result<Value, Error>> {
 			println!("{:?}", params);
 			futures::future::ok::<Value, Error>(json!(Response {
 				value: String::from("yes, my lord")
