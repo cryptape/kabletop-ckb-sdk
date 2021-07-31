@@ -68,6 +68,17 @@ pub fn get_transaction(tx_hash: Byte32) -> Result<Transaction> {
     }
 }
 
+pub fn send_transaction(tx: Transaction) -> Result<H256> {
+    let result = CKB_CLIENT
+        .lock()
+        .unwrap()
+		.send_transaction(tx);
+	match result {
+		Ok(hash) => Ok(hash),
+		Err(err) => Err(anyhow!(err))
+	}
+}
+
 pub fn get_tip_block_number() -> u64 {
     CKB_CLIENT
         .lock()
