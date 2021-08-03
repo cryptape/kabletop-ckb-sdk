@@ -48,6 +48,7 @@ impl Client {
 		self
 	}
 
+	// connect to server and listen request from server
 	pub fn connect(self, sleep_ms: u64) -> Result<ClientSender> {
 		let mut client = ClientBuilder::new(self.socket.as_str())?.connect_insecure()?;
 		client.set_nonblocking(true)?;

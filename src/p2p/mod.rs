@@ -5,8 +5,12 @@ use serde::{
 mod server;
 mod client;
 
-pub use server::Server;
-pub use client::Client;
+pub use server::{
+	Server, ServerClient
+};
+pub use client::{
+	Client, ClientSender
+};
 
 #[derive(Serialize, Deserialize)]
 struct Wrapper {
