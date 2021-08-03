@@ -284,10 +284,10 @@ pub fn sign_channel_round(
 }
 
 // make a kabletop round molecule format data
-pub fn make_round(user_type: u8, operations: &Vec<&str>) -> Round {
+pub fn make_round(user_type: u8, operations: &Vec<String>) -> Round {
 	let operations = operations
 		.iter()
-		.map(|&bytes| bytes.as_bytes().into())
+		.map(|bytes| bytes.as_bytes().into())
 		.collect::<Vec<ProtoBytes>>();
 	let operations = Operations::new_builder()
 		.set(operations)
