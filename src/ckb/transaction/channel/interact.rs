@@ -6,7 +6,9 @@ use crate::{
             keystore, signer
         },
         transaction::{
-            genesis::GENESIS as _G, helper, channel::protocol::*
+            genesis::GENESIS as _G, helper, channel::protocol::{
+				*, Bytes as ProtoBytes
+			}
         }
     }
 };
@@ -245,7 +247,8 @@ pub fn check_channel_round(
         };
         Ok(pkhash == expect_pkhash)
     } else {
-        Err(anyhow!("import empty signed_rounds data"))
+        // Err(anyhow!("import empty signed_rounds data"))
+		Ok(true)
     }
 }
 
@@ -278,4 +281,19 @@ pub fn sign_channel_round(
         });
 
     Ok(privkey.sign_recoverable(&Message::from(digest))?)
+}
+
+// make a kabletop round molecule format data
+pub fn make_round(user_type: u8, operations: &Vec<&str>) -> Round {
+	let operations = operations
+		.iter()
+		.map(|&bytes| bytes.as_bytes().into())
+		.collect::<Vec<ProtoBytes>>();
+	let operations = Operations::new_builder()
+		.set(operations)
+		.build();
+	Round::new_builder()
+		.user_type(user_type.into())
+		.operations(operations)
+		.build()
 }
