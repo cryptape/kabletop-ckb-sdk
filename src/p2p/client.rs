@@ -16,7 +16,7 @@ use std::{
 	}
 };
 use super::{
-	Wrapper, Error
+	Wrapper, Error, Caller
 };
 
 // a client instance connecting to server
@@ -117,8 +117,10 @@ impl ClientSender {
 			server_response: response
 		}
 	}
+}
 
-	pub fn call<T: Serialize, R: DeserializeOwned>(&mut self, name: &str, params: T) -> Result<R> {
+impl Caller for ClientSender {
+	fn call<T: Serialize, R: DeserializeOwned>(&mut self, name: &str, params: T) -> Result<R> {
 		if let Some(response) = self.server_response.get(&String::from(name)) {
 			let request = to_string(
 				&json!(Wrapper {

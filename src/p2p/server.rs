@@ -17,7 +17,7 @@ use anyhow::{
 	Result, anyhow
 };
 use super::{
-	Wrapper, Error
+	Wrapper, Error, Caller
 };
 
 // a server instance for handling registering both request/response methods and listening at none-blocking mode,
@@ -125,8 +125,10 @@ impl ServerClient {
 			client_response: response
 		}
 	}
+}
 
-	pub fn call<T: Serialize, R: DeserializeOwned>(&mut self, name: &str, params: T) -> Result<R> {
+impl Caller for ServerClient {
+	fn call<T: Serialize, R: DeserializeOwned>(&mut self, name: &str, params: T) -> Result<R> {
 		if let Some(receiver) = self.client_response.get(&String::from(name)) {
 			let request = to_string(
 				&Wrapper {

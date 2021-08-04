@@ -1,6 +1,7 @@
 use serde::{
-	Serialize, Deserialize
+	Serialize, Deserialize, de::DeserializeOwned
 };
+use anyhow::Result;
 
 mod server;
 mod client;
@@ -11,6 +12,9 @@ pub use server::{
 pub use client::{
 	Client, ClientSender
 };
+pub trait Caller {
+	fn call<T: Serialize, R: DeserializeOwned>(&mut self, name: &str, params: T) -> Result<R>;
+}
 
 #[derive(Serialize, Deserialize)]
 struct Wrapper {
@@ -26,7 +30,7 @@ struct Error {
 #[cfg(test)]
 mod test {
 	use super::{
-		Server, Client
+		Server, Client, Caller
 	};
 	use serde::{
 		Deserialize, Serialize
