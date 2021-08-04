@@ -16,7 +16,9 @@ use serde_json::{
 use anyhow::{
 	Result, anyhow
 };
-use super::Wrapper;
+use super::{
+	Wrapper, Error
+};
 
 // a server instance for handling registering both request/response methods and listening at none-blocking mode,
 // but only supports one connection at the same time
@@ -77,13 +79,12 @@ impl Server {
 							if let Some(callback) = self.server_registry.get(&message.name) {
 								let params = from_str(message.body.as_str()).unwrap();
 								let response = {
-									let result = callback(params).unwrap();
-									to_string(
-										&json!(Wrapper {
-											name: message.name,
-											body: to_string(&result).unwrap()
-										})
-									).unwrap()
+									let body: String;
+									match callback(params) {
+										Ok(result)  => body = to_string(&result).unwrap(),
+										Err(reason) => body = to_string(&json!(Error { reason })).unwrap()
+									}
+									to_string(&json!(Wrapper { name: message.name, body })).unwrap()
 								};
 								client.send_message(&Message::text(response)).expect("send server response to client")
 							// searching in client message registry sender table
@@ -135,7 +136,10 @@ impl ServerClient {
 			)?;
 			self.writer.send(request)?;
 			let value: R = {
-				let response = from_str(receiver.recv()?.as_str())?;
+				let response: Value = from_str(receiver.recv()?.as_str())?;
+				if let Ok(error) = from_value::<Error>(response.clone()) {
+					return Err(anyhow!("error from server: {}", error.reason));
+				}
 				from_value(response)?
 			};
 			Ok(value)

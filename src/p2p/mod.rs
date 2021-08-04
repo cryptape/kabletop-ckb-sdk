@@ -18,6 +18,11 @@ struct Wrapper {
 	body: String
 }
 
+#[derive(Serialize, Deserialize)]
+struct Error {
+	reason: String
+}
+
 #[cfg(test)]
 mod test {
 	use super::{
@@ -70,5 +75,28 @@ mod test {
 			value: String::from("world: server request")
 		}).unwrap();
 		println!("{:?}", result);
+	}
+
+	#[test]
+	fn test_jsonrpc_error() {
+		Server::new("0.0.0.0:11525")
+			.register("hello", |params| {
+				println!("Server => {:?}", params);
+				Err(String::from("bad hello result"))
+				// Ok(json!(Response {
+				// 	value: String::from("hello: server responce")
+				// }))
+			})
+			.listen(300)
+			.unwrap();
+		let mut client = Client::new("ws://127.0.0.1:11525")
+			.register_call("hello")
+			.connect(300)
+			.unwrap();
+		println!("1. Client to Server [Error]");
+		let result: Response = client.call("hello", Request {
+			value: String::from("hello: client request")
+		}).unwrap();
+		println!("Client => {:?}", result);
 	}
 }

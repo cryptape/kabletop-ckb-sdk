@@ -15,7 +15,9 @@ use std::{
 		channel, Receiver, Sender
 	}
 };
-use super::Wrapper;
+use super::{
+	Wrapper, Error
+};
 
 // a client instance connecting to server
 pub struct Client {
@@ -72,13 +74,12 @@ impl Client {
 					if let Some(callback) = self.client_registry.get(&message.name) {
 						let params = from_str(message.body.as_str()).unwrap();
 						let response = {
-							let result = callback(params).unwrap();
-							to_string(
-								&json!(Wrapper {
-									name: message.name,
-									body: to_string(&result).unwrap()
-								})
-							).unwrap()
+							let body: String;
+							match callback(params) {
+								Ok(result)  => body = to_string(&result).unwrap(),
+								Err(reason) => body = to_string(&json!(Error { reason })).unwrap()
+							}
+							to_string(&json!(Wrapper { name: message.name, body })).unwrap()
 						};
 						client.send_message(&Message::text(response)).expect("send client response to server");
 					// check wether message is in the client request table
@@ -126,11 +127,14 @@ impl ClientSender {
 				})
 			)?;
 			self.writer.send(request)?;
-			let value = {
-				let value = response.recv()?;
-				from_str(value.as_str())?
+			let value: R = {
+				let value: Value = from_str(response.recv()?.as_str())?;
+				if let Ok(error) = from_value::<Error>(value.clone()) {
+					return Err(anyhow!("error from server: {}", error.reason));
+				}
+				from_value(value)?
 			};
-			Ok(from_value(value)?)
+			Ok(value)
 		} else {
 			Err(anyhow!("method {} isn't registered", name))
 		}
