@@ -128,7 +128,7 @@ impl ServerClient {
 }
 
 impl Caller for ServerClient {
-	fn call<T: Serialize, R: DeserializeOwned>(&mut self, name: &str, params: T) -> Result<R> {
+	fn call<T: Serialize, R: DeserializeOwned>(&self, name: &str, params: T) -> Result<R> {
 		if let Some(receiver) = self.client_response.get(&String::from(name)) {
 			let request = to_string(
 				&Wrapper {

@@ -13,7 +13,7 @@ pub use client::{
 	Client, ClientSender
 };
 pub trait Caller {
-	fn call<T: Serialize, R: DeserializeOwned>(&mut self, name: &str, params: T) -> Result<R>;
+	fn call<T: Serialize, R: DeserializeOwned>(&self, name: &str, params: T) -> Result<R>;
 }
 
 #[derive(Serialize, Deserialize)]
@@ -49,7 +49,7 @@ mod test {
 
 	#[test]
 	fn test_jsonrpc() {
-		let mut server = Server::new("0.0.0.0:11525")
+		let server = Server::new("0.0.0.0:11525")
 			.register("hello", |params| {
 				println!("Server => {:?}", params);
 				Ok(json!(Response {
@@ -59,7 +59,7 @@ mod test {
 			.register_call("world")
 			.listen(300)
 			.unwrap();
-		let mut client = Client::new("ws://127.0.0.1:11525")
+		let client = Client::new("ws://127.0.0.1:11525")
 			.register_call("hello")
 			.register("world", |params| {
 				println!("{:?}", params);
@@ -93,7 +93,7 @@ mod test {
 			})
 			.listen(300)
 			.unwrap();
-		let mut client = Client::new("ws://127.0.0.1:11525")
+		let client = Client::new("ws://127.0.0.1:11525")
 			.register_call("hello")
 			.connect(300)
 			.unwrap();

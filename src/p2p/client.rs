@@ -120,7 +120,7 @@ impl ClientSender {
 }
 
 impl Caller for ClientSender {
-	fn call<T: Serialize, R: DeserializeOwned>(&mut self, name: &str, params: T) -> Result<R> {
+	fn call<T: Serialize, R: DeserializeOwned>(&self, name: &str, params: T) -> Result<R> {
 		if let Some(response) = self.server_response.get(&String::from(name)) {
 			let request = to_string(
 				&json!(Wrapper {
