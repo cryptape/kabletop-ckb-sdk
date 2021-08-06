@@ -23,7 +23,7 @@ use super::{
 pub struct Client {
 	client_registry: HashMap<String, Box<dyn Fn(Value) -> Result<Value, String> + Send + 'static>>,
 	server_registry: Vec<String>,
-	socket:          String,
+	socket:          String
 }
 
 impl Client {
@@ -51,7 +51,10 @@ impl Client {
 	}
 
 	// connect to server and listen request from server
-	pub fn connect(self, sleep_ms: u64) -> Result<ClientSender> {
+	pub fn connect<F>(self, sleep_ms: u64, callback: F) -> Result<ClientSender> 
+		where
+			F: Fn() + Send + 'static
+	{
 		let mut client = ClientBuilder::new(self.socket.as_str())?.connect_insecure()?;
 		client.set_nonblocking(true)?;
 		let mut server_sender = HashMap::new();
@@ -89,13 +92,21 @@ impl Client {
 						panic!("message {} isn't registered in both server and client registry table", message.name);
 					}
 				},
-				Err(WebSocketError::NoDataAvailable) => {},
+				Err(WebSocketError::NoDataAvailable) => {
+					callback();
+					break
+				},
 				Err(WebSocketError::IoError(_)) => {},
 				Err(err) => panic!("{}", err),
 				_ => panic!("unsupported none-text type message from server")
 			}
 			// receiving calling messages from client call
 			if let Ok(message) = reader.try_recv() {
+				if message == String::from("_SHUTDOWN_") {
+					client.shutdown().expect("client shutdown");
+					callback();
+					break
+				}
 				client.send_message(&Message::text(message)).expect("send client request to server");
 			}
 			thread::sleep(Duration::from_millis(sleep_ms));
@@ -107,7 +118,7 @@ impl Client {
 // clientsender represents a sender feature in client to handle sending request to server
 pub struct ClientSender {
 	writer:          Sender<String>,
-    server_response: HashMap<String, Receiver<String>>,
+    server_response: HashMap<String, Receiver<String>>
 }
 
 impl ClientSender {
@@ -116,6 +127,12 @@ impl ClientSender {
 			writer:          writer,
 			server_response: response
 		}
+	}
+
+	pub fn shutdown(&self) {
+		self.writer
+			.send(String::from("_SHUTDOWN_"))
+			.expect("send shutdown");
 	}
 }
 

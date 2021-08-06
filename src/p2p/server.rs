@@ -3,8 +3,10 @@ use websocket::{
 };
 use std::{
 	thread, net::SocketAddr, collections::HashMap, time::Duration,
-	sync::mpsc::{
-		Sender, Receiver, channel
+	sync::{
+		RwLock, mpsc::{
+			Sender, Receiver, channel
+		}
 	}
 };
 use serde::{
@@ -19,6 +21,10 @@ use anyhow::{
 use super::{
 	Wrapper, Error, Caller
 };
+
+lazy_static! {
+	static ref ACTIVE: RwLock<bool> = RwLock::new(false);
+}
 
 // a server instance for handling registering both request/response methods and listening at none-blocking mode,
 // but only supports one connection at the same time
@@ -53,7 +59,10 @@ impl Server {
 	}
 
 	// listen connections at none-blocking mode
-	pub fn listen(self, sleep_ms: u64) -> Result<ServerClient> {
+	pub fn listen<F>(self, sleep_ms: u64, callback: F) -> Result<ServerClient> 
+		where
+			F: Fn(bool) + Send + 'static
+	{
 		let server = WsServer::bind(self.socket)?;
 		let mut client_sender = HashMap::new();
 		let mut client_receiver = HashMap::new();
@@ -67,8 +76,10 @@ impl Server {
 			for conn in server.filter_map(Result::ok) {
 				let mut client = conn.accept().expect("accept connection");
 				client.set_nonblocking(true).expect("set blocking");
+				*ACTIVE.write().unwrap() = true;
+				callback(true);
 				loop {
-					// receiving calling messages from client, server's recv_message won't be blocked
+					// receiving calling messages from client
 					match client.recv_message() {
 						Ok(OwnedMessage::Text(value)) => {
 							let message: Wrapper = {
@@ -94,7 +105,7 @@ impl Server {
 								panic!("method {} can't find in both server and client registry table", message.name);
 							}
 						},
-						Err(WebSocketError::NoDataAvailable) => {},
+						Err(WebSocketError::NoDataAvailable) => break,
 						Err(WebSocketError::IoError(_)) => {},
 						Err(err) => panic!("{}", err),
 						_ => panic!("unsupported none-text type message from client")
@@ -105,6 +116,8 @@ impl Server {
 					}
 					thread::sleep(Duration::from_millis(sleep_ms));
 				}
+				*ACTIVE.write().unwrap() = false;
+				callback(false);
 			}
 		});
 		Ok(ServerClient::new(writer, client_receiver))
@@ -125,10 +138,21 @@ impl ServerClient {
 			client_response: response
 		}
 	}
+
+	pub fn active(&self) -> bool {
+		if let Ok(active) = ACTIVE.read() {
+			*active
+		} else {
+			false
+		}
+	}
 }
 
 impl Caller for ServerClient {
 	fn call<T: Serialize, R: DeserializeOwned>(&self, name: &str, params: T) -> Result<R> {
+		if !self.active() {
+			return Err(anyhow!("no client connected"));
+		}
 		if let Some(receiver) = self.client_response.get(&String::from(name)) {
 			let request = to_string(
 				&Wrapper {

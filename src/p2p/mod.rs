@@ -48,7 +48,7 @@ mod test {
 	}
 
 	#[test]
-	fn test_jsonrpc() {
+	fn test_jsonrpc_success() {
 		let server = Server::new("0.0.0.0:11525")
 			.register("hello", |params| {
 				println!("Server => {:?}", params);
@@ -57,7 +57,7 @@ mod test {
 				}))
 			})
 			.register_call("world")
-			.listen(300)
+			.listen(300, |active| println!("server_active = {}", active))
 			.unwrap();
 		let client = Client::new("ws://127.0.0.1:11525")
 			.register_call("hello")
@@ -67,7 +67,7 @@ mod test {
 					value: String::from("world: client response")
 				}))
 			})
-			.connect(300)
+			.connect(300, || println!("client_active = false"))
 			.unwrap();
 		println!("1. Client to Server");
 		let result: Response = client.call("hello", Request {
@@ -79,6 +79,8 @@ mod test {
 			value: String::from("world: server request")
 		}).unwrap();
 		println!("{:?}", result);
+		client.shutdown();
+		std::thread::sleep(std::time::Duration::from_millis(2000));
 	}
 
 	#[test]
@@ -91,11 +93,11 @@ mod test {
 				// 	value: String::from("hello: server responce")
 				// }))
 			})
-			.listen(300)
+			.listen(300, |_| {})
 			.unwrap();
 		let client = Client::new("ws://127.0.0.1:11525")
 			.register_call("hello")
-			.connect(300)
+			.connect(300, || {})
 			.unwrap();
 		println!("1. Client to Server [Error]");
 		let result: Response = client.call("hello", Request {
