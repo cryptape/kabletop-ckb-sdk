@@ -1,5 +1,5 @@
 use websocket::{
-	ClientBuilder, Message, message::OwnedMessage, result::WebSocketError
+	ClientBuilder, Message, message::OwnedMessage, result::WebSocketError, ws, sync::Client as WsClient
 };
 use serde_json::{
     from_value, json, Value, to_string, from_str
@@ -11,7 +11,7 @@ use anyhow::{
     Result, anyhow
 };
 use std::{
-	collections::HashMap, thread, time::{
+	collections::HashMap, thread, net::TcpStream, io::ErrorKind, time::{
 		Duration, SystemTime
 	}, sync::mpsc::{
 		channel, Receiver, Sender
@@ -68,6 +68,20 @@ impl Client {
 		}
 		let (writer, reader) = channel();
 		thread::spawn(move || {
+			fn _send<M: ws::Message>(client: &mut WsClient<TcpStream>, msg: M, callback: &dyn Fn()) -> bool {
+				match client.send_message(&msg) {
+					Ok(_) => true,
+					Err(WebSocketError::IoError(err)) => {
+						if err.kind() == ErrorKind::ConnectionReset {
+							callback();
+							false
+						} else {
+							panic!("client send error: {}", err);
+						}
+					},
+					Err(err) => Err(err).expect("client send")
+				}
+			}
 			let mut last_pong = SystemTime::now();
 			let mut last_ping = SystemTime::now();
 			loop {
@@ -82,11 +96,11 @@ impl Client {
 						match message {
 							Wrapper::Send(payload) => {
 								// check wether message is in the client registry table
-								if let Some(callback) = self.client_registry.get(&payload.name) {
+								if let Some(function) = self.client_registry.get(&payload.name) {
 									let params = from_str(payload.body.as_str()).unwrap();
 									let response = {
 										let body: String;
-										match callback(params) {
+										match function(params) {
 											Ok(result)  => body = to_string(&result).unwrap(),
 											Err(reason) => body = to_string(&json!(Error { reason })).unwrap()
 										}
@@ -94,7 +108,9 @@ impl Client {
 											&Wrapper::Reply(Payload { name: payload.name, body })
 										).unwrap()
 									};
-									client.send_message(&Message::text(response)).expect("send client response to server");
+									if !_send(&mut client, Message::text(response), &callback) {
+										break
+									}
 								} else {
 									panic!("message {} isn't registered in server registry table", payload.name);
 								}
@@ -122,11 +138,14 @@ impl Client {
 				// receiving calling messages from client call
 				if let Ok(message) = reader.try_recv() {
 					if message == String::from("_SHUTDOWN_") {
-						client.send_message(&OwnedMessage::Close(None)).expect("client shutdown");
-						callback();
-						break
+						if !_send(&mut client, OwnedMessage::Close(None), &callback) {
+							break
+						}
+					} else {
+						if !_send(&mut client, Message::text(message), &callback) {
+							break
+						}
 					}
-					client.send_message(&Message::text(message)).expect("send client request to server");
 				}
 				// check connection alive status
 				if now.duration_since(last_pong).unwrap() > Duration::from_secs(6) {
@@ -135,7 +154,9 @@ impl Client {
 				}
 				// check sending heartbeat message
 				if now.duration_since(last_ping).unwrap() > Duration::from_secs(2) {
-					client.send_message(&OwnedMessage::Ping(vec![])).expect("client ping");
+					if !_send(&mut client, OwnedMessage::Ping(vec![]), &callback) {
+						break
+					}
 					last_ping = now;
 				}
 				thread::sleep(Duration::from_millis(sleep_ms));

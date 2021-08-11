@@ -92,11 +92,11 @@ impl Server {
 							match message {
 								Wrapper::Send(payload) => {
 									// searching in server response registry table
-									if let Some(callback) = self.server_registry.get(&payload.name) {
+									if let Some(function) = self.server_registry.get(&payload.name) {
 										let params = from_str(payload.body.as_str()).unwrap();
 										let response = {
 											let body: String;
-											match callback(params) {
+											match function(params) {
 												Ok(result)  => body = to_string(&result).unwrap(),
 												Err(reason) => body = to_string(&json!(Error { reason })).unwrap()
 											}
