@@ -17,7 +17,13 @@ pub trait Caller {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Wrapper {
+enum Wrapper {
+	Send(Payload),
+	Reply(Payload)
+}
+
+#[derive(Serialize, Deserialize)]
+struct Payload {
 	name: String,
 	body: String
 }

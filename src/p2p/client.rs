@@ -11,12 +11,14 @@ use anyhow::{
     Result, anyhow
 };
 use std::{
-	collections::HashMap, thread, time::Duration, sync::mpsc::{
+	collections::HashMap, thread, time::{
+		Duration, SystemTime
+	}, sync::mpsc::{
 		channel, Receiver, Sender
 	}
 };
 use super::{
-	Wrapper, Error, Caller
+	Wrapper, Payload, Error, Caller
 };
 
 // a client instance connecting to server
@@ -65,51 +67,79 @@ impl Client {
 			server_receiver.insert(name.clone(), sr);
 		}
 		let (writer, reader) = channel();
-		thread::spawn(move || loop {
-			// receiving response and calling messages from server, client's recv_messsage method will be blocked
-			match client.recv_message() {
-				Ok(OwnedMessage::Text(value)) => {
-					let message: Wrapper = {
-						let value = from_str(value.as_str()).expect("parse server message");
-						from_value(value).unwrap()
-					};
-					// check wether message is in the client registry table
-					if let Some(callback) = self.client_registry.get(&message.name) {
-						let params = from_str(message.body.as_str()).unwrap();
-						let response = {
-							let body: String;
-							match callback(params) {
-								Ok(result)  => body = to_string(&result).unwrap(),
-								Err(reason) => body = to_string(&json!(Error { reason })).unwrap()
-							}
-							to_string(&json!(Wrapper { name: message.name, body })).unwrap()
+		thread::spawn(move || {
+			let mut last_pong = SystemTime::now();
+			let mut last_ping = SystemTime::now();
+			loop {
+				let now = SystemTime::now();
+				// receiving response and calling messages from server, client's recv_messsage method will be blocked
+				match client.recv_message() {
+					Ok(OwnedMessage::Text(value)) => {
+						let message: Wrapper = {
+							let value = from_str(value.as_str()).expect("parse server message");
+							from_value(value).unwrap()
 						};
-						client.send_message(&Message::text(response)).expect("send client response to server");
-					// check wether message is in the client request table
-					} else if let Some(response) = server_sender.get(&message.name) {
-						response.send(message.body).unwrap();
-					} else {
-						panic!("message {} isn't registered in both server and client registry table", message.name);
+						match message {
+							Wrapper::Send(payload) => {
+								// check wether message is in the client registry table
+								if let Some(callback) = self.client_registry.get(&payload.name) {
+									let params = from_str(payload.body.as_str()).unwrap();
+									let response = {
+										let body: String;
+										match callback(params) {
+											Ok(result)  => body = to_string(&result).unwrap(),
+											Err(reason) => body = to_string(&json!(Error { reason })).unwrap()
+										}
+										to_string(
+											&Wrapper::Reply(Payload { name: payload.name, body })
+										).unwrap()
+									};
+									client.send_message(&Message::text(response)).expect("send client response to server");
+								} else {
+									panic!("message {} isn't registered in server registry table", payload.name);
+								}
+							},
+							Wrapper::Reply(payload) => {
+								// check wether message is in the client request table
+								if let Some(response) = server_sender.get(&payload.name) {
+									response.send(payload.body).unwrap();
+								} else {
+									panic!("message {} isn't registered in client registry table", payload.name);
+								}
+							}
+						}
+					},
+					Ok(OwnedMessage::Close(_)) => {
+						callback();
+						break
+					},
+					Ok(OwnedMessage::Pong(_)) => last_pong = now,
+					Err(WebSocketError::NoDataAvailable) => {},
+					Err(WebSocketError::IoError(_)) => {},
+					Err(err) => panic!("{}", err),
+					_ => panic!("unsupported none-text type message from server")
+				}
+				// receiving calling messages from client call
+				if let Ok(message) = reader.try_recv() {
+					if message == String::from("_SHUTDOWN_") {
+						client.send_message(&OwnedMessage::Close(None)).expect("client shutdown");
+						callback();
+						break
 					}
-				},
-				Err(WebSocketError::NoDataAvailable) => {
-					callback();
-					break
-				},
-				Err(WebSocketError::IoError(_)) => {},
-				Err(err) => panic!("{}", err),
-				_ => panic!("unsupported none-text type message from server")
-			}
-			// receiving calling messages from client call
-			if let Ok(message) = reader.try_recv() {
-				if message == String::from("_SHUTDOWN_") {
-					client.shutdown().expect("client shutdown");
+					client.send_message(&Message::text(message)).expect("send client request to server");
+				}
+				// check connection alive status
+				if now.duration_since(last_pong).unwrap() > Duration::from_secs(6) {
 					callback();
 					break
 				}
-				client.send_message(&Message::text(message)).expect("send client request to server");
+				// check sending heartbeat message
+				if now.duration_since(last_ping).unwrap() > Duration::from_secs(2) {
+					client.send_message(&OwnedMessage::Ping(vec![])).expect("client ping");
+					last_ping = now;
+				}
+				thread::sleep(Duration::from_millis(sleep_ms));
 			}
-			thread::sleep(Duration::from_millis(sleep_ms));
 		});
 		Ok(ClientSender::new(writer, server_receiver))
 	}
@@ -140,10 +170,12 @@ impl Caller for ClientSender {
 	fn call<T: Serialize, R: DeserializeOwned>(&self, name: &str, params: T) -> Result<R> {
 		if let Some(response) = self.server_response.get(&String::from(name)) {
 			let request = to_string(
-				&json!(Wrapper {
-					name: String::from(name),
-					body: to_string(&json!(params))?
-				})
+				&Wrapper::Send(
+					Payload {
+						name: String::from(name),
+						body: to_string(&json!(params))?
+					}
+				)
 			)?;
 			self.writer.send(request)?;
 			let value: R = {
