@@ -2,9 +2,8 @@ use async_jsonrpc_client::{
     HttpClient, Output, Transport, Params
 };
 use ckb_types::{
-    prelude::*, core::BlockView, H256,
-    packed::{
-        Block, Transaction, Byte32
+    prelude::*, core::BlockView, H256, packed::{
+        Block, Transaction, Byte32, Script
     }
 };
 use serde_json::{
@@ -14,15 +13,16 @@ use anyhow::{
     Result, anyhow
 };
 use crate::{
-    ckb::rpc::types::{
-        Pagination, Cell, SearchKey, Order, ckb
-    },
-    config::VARS as _C,
+    config::VARS as _C, ckb::rpc::types::{
+        Pagination, Cell, SearchKey, Order, ckb, ScriptType
+    }
 };
 use ckb_jsonrpc_types::{
     JsonBytes, Status, Uint32
 };
-use std::sync::Mutex;
+use std::{
+	sync::Mutex, collections::HashMap
+};
 use ckb_sdk::rpc::HttpRpcClient;
 
 lazy_static! {
@@ -112,4 +112,37 @@ pub async fn get_live_cells(search_key: SearchKey, limit: u32, cursor: Option<Js
         },
         Output::Failure(err) => return Err(anyhow!(err))
     }
+}
+
+pub async fn get_live_nfts(lock_script: Script, type_script: Option<Script>, cellstep: u32) -> Result<HashMap<[u8; 20], u32>> {
+    let mut cursor = None;
+	let mut live_nfts = HashMap::new();
+    loop {
+		let mut search_key = SearchKey::new(lock_script.clone().into(), ScriptType::Lock);
+		if let Some(type_script) = &type_script {
+			search_key = search_key.filter(type_script.clone().into());
+		}
+		let live_cells = get_live_cells(search_key, cellstep, cursor).await?;
+		live_cells.objects
+			.iter()
+			.for_each(|cell| {
+				let mut data = cell.output_data.to_vec();
+				let mut nft = [0u8; 20];
+				let n = data.len() / 20;
+				for _ in 0..n {
+					nft.copy_from_slice(&data[..20]);
+					data = data[20..].to_vec();
+					if let Some(count) = live_nfts.get_mut(&nft) {
+						*count += 1;
+					} else {
+						live_nfts.insert(nft, 1);
+					}
+				}
+			});
+        if live_cells.last_cursor.is_empty() {
+            break;
+        } 
+        cursor = Some(live_cells.last_cursor);
+	}
+	Ok(live_nfts)
 }
