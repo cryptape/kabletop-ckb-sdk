@@ -35,16 +35,17 @@ pub fn get_genesis_block() -> Result<Block> {
 }
 
 pub fn get_block(block_number: u64) -> Result<Block> {
+	let mut error = String::new();
     let block = CKB_CLIENT
         .lock()
         .unwrap()
         .get_block_by_number(block_number)
         .unwrap_or_else(|err| {
-            eprintln!("{}", err);
+			error = err.to_string();
             None
         });
     let block = {
-        let genesis = block.ok_or(anyhow!(format!("block #{} is non-existent", block_number)))?;
+        let genesis = block.ok_or(anyhow!(format!("fetch block #{} error: {}", block_number, error)))?;
         let block: BlockView = genesis.into();
         Block::new_unchecked(block.data().as_bytes())
     };
@@ -52,19 +53,20 @@ pub fn get_block(block_number: u64) -> Result<Block> {
 }
 
 pub fn get_transaction(tx_hash: Byte32) -> Result<Transaction> {
+	let mut error = String::new();
     let tx = CKB_CLIENT
         .lock()
         .unwrap()
         .get_transaction(H256(tx_hash.unpack()))
         .unwrap_or_else(|err| {
-            eprintln!("{}", err);
+			error = err.to_string();
             None
         });
-    let tx = tx.ok_or(anyhow!("tx is non-existent"))?;
+    let tx = tx.ok_or(anyhow!(error))?;
     if tx.tx_status.status == Status::Committed {
         Ok(tx.transaction.inner.into())
     } else {
-        Err(anyhow!("transaction is not committed"))
+        Err(anyhow!("not committed"))
     }
 }
 

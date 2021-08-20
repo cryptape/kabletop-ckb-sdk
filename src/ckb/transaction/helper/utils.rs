@@ -1,5 +1,4 @@
 use hex;
-use futures::executor::block_on;
 use ckb_sdk::HumanCapacity;
 use ckb_crypto::secp::Privkey;
 use ckb_hash::{
@@ -16,7 +15,7 @@ use anyhow::{
     Result, anyhow
 };
 use std::{
-    str::FromStr, convert::TryInto, collections::HashMap
+    str::FromStr, convert::TryInto
 };
 use crate::{
     config::VARS as _C, ckb::{
@@ -131,20 +130,4 @@ pub fn sighash_script(lock_args: &[u8]) -> Script {
         .as_builder()
         .args(Bytes::from(lock_args.to_vec()).pack())
         .build()
-}
-
-// get user owned nfts by their lock_script (from user_pkhash) and type_script (from composer_pkhash)
-pub fn owned_nfts() -> Result<HashMap<String, u32>> {
-    let lock_script = sighash_script(&_C.common.user_key.pubhash);
-    let type_script = {
-        let wallet = wallet_script(_C.common.composer_key.pubhash.to_vec());
-        nft_script(wallet.calc_script_hash().raw_data().to_vec())
-    };
-	let nfts = block_on(rpc::get_live_nfts(lock_script, Some(type_script), 10))?
-		.iter()
-		.map(|(hash, &value)| {
-			(hex::encode(hash), value)
-		})
-		.collect::<HashMap<_, _>>();
-	Ok(nfts)
 }
