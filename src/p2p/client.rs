@@ -148,7 +148,7 @@ impl Client {
 					}
 				}
 				// check connection alive status
-				if now.duration_since(last_pong).unwrap() > Duration::from_secs(6) {
+				if now.duration_since(last_pong).unwrap() > Duration::from_secs(8) {
 					callback();
 					break
 				}

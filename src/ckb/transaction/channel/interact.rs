@@ -73,17 +73,29 @@ pub async fn prepare_channel_tx(
     
     // prepare output
     let kabletop_script = helper::kabletop_script(kabletop_args.as_bytes().to_vec());
-    let output = CellOutput::new_builder()
+    let mut output = CellOutput::new_builder()
         .lock(kabletop_script.clone())
-        .capacity(Capacity::shannons(bet_ckb + staking_ckb).pack())
-        .build();
+        .build_exact_capacity(Capacity::shannons(0))?;
+	let half_capacity = Capacity::shannons(bet_ckb + staking_ckb);
+	let required_capacity: Capacity = output.capacity().unpack();
+	if required_capacity.as_u64() > half_capacity.as_u64() * 2 {
+		return Err(anyhow!(
+			format!("bet and staking ckb ({}) cannot cover half of kabletop occupied capacity ({})",
+				half_capacity.as_u64() as f64 / 100_000_000.0, required_capacity.as_u64() as f64 / 100_000_000.0)
+		));
+	} else {
+		output = output
+			.as_builder()
+			.capacity(half_capacity.pack())
+			.build();
+	}
 
     // prepare tx
     let tx = TransactionBuilder::default()
         .output(output)
         .output_data(Bytes::from(vec![]).pack())
         .build();
-    // let tx = helper::complete_tx_with_nft_cells(tx, pkhash, &keystore::COMPOSER_PUBHASH, nfts.clone(), false).await?;
+    let tx = helper::complete_tx_with_nft_cells(tx, pkhash, &keystore::COMPOSER_PUBHASH, nfts.clone(), false).await?;
     let tx = helper::complete_tx_with_sighash_cells(tx, pkhash, helper::fee("0.05")).await?;
     let tx = helper::add_code_celldep(tx, OutPoint::new(_C.kabletop.tx_hash.clone(), 0));
 
@@ -136,7 +148,7 @@ pub async fn complete_channel_tx(
         .as_advanced_builder()
         .set_outputs(tx_outputs)
         .build();
-    // let tx = helper::complete_tx_with_nft_cells(tx, pkhash, &keystore::COMPOSER_PUBHASH, nfts.clone(), false).await?;
+    let tx = helper::complete_tx_with_nft_cells(tx, pkhash, &keystore::COMPOSER_PUBHASH, nfts.clone(), false).await?;
     let tx = helper::complete_tx_with_sighash_cells(tx, pkhash, helper::fee("0.05")).await?;
 
     Ok(tx)
@@ -147,67 +159,67 @@ pub fn sign_channel_tx(
     tx: TransactionView, staking_ckb: u64, bet_ckb: u64, deck_size: u8, nfts: &Vec<[u8; 20]>, privkey: &Privkey
 ) -> Result<TransactionView> {
     // check kabletop args
-    // let output = tx.output(0).ok_or(anyhow!("tx's output is empty"))?;
-    // let kabletop_args = {
-    //     let args: Bytes = output.lock().args().unpack();
-    //     Args::new_unchecked(MolBytes::from(args.to_vec()))
-    // };
+    let output = tx.output(0).ok_or(anyhow!("tx's output is empty"))?;
+    let kabletop_args = {
+        let args: Bytes = output.lock().args().unpack();
+        Args::new_unchecked(MolBytes::from(args.to_vec()))
+    };
     let pkhash = helper::privkey_to_pkhash(&privkey);
-    // let user1_pkhash = <[u8; 20]>::from(kabletop_args.user1_pkhash());
-    // let user2_pkhash = <[u8; 20]>::from(kabletop_args.user2_pkhash());
-    // let mut user1_nfts = &mut Vec::from(kabletop_args.user1_nfts());
-    // let mut user2_nfts = &mut Vec::from(kabletop_args.user2_nfts());
-    // if u64::from(kabletop_args.user_staking_ckb())  != staking_ckb
-    //     || u8::from(kabletop_args.user_deck_size()) != deck_size
-    //     || (user1_pkhash == pkhash && user1_nfts != nfts)
-    //     || (user2_pkhash == pkhash && user2_nfts != nfts) {
-    //     return Err(anyhow!("some of kabletop args mismatched"));
-    // }
+    let user1_pkhash = <[u8; 20]>::from(kabletop_args.user1_pkhash());
+    let user2_pkhash = <[u8; 20]>::from(kabletop_args.user2_pkhash());
+    let mut user1_nfts = &mut Vec::from(kabletop_args.user1_nfts());
+    let mut user2_nfts = &mut Vec::from(kabletop_args.user2_nfts());
+    if u64::from(kabletop_args.user_staking_ckb())  != staking_ckb
+        || u8::from(kabletop_args.user_deck_size()) != deck_size
+        || (user1_pkhash == pkhash && user1_nfts != nfts)
+        || (user2_pkhash == pkhash && user2_nfts != nfts) {
+        return Err(anyhow!("some of kabletop args mismatched"));
+    }
 
-    // // check kabletop output capacity
-    // let capacity = {
-    //     let ckb: Capacity = output.capacity().unpack();
-    //     ckb.as_u64()
-    // };
-    // if capacity != (staking_ckb + bet_ckb) * 2 {
-    //     return Err(anyhow!("kabletop output capacity is incorrect"));
-    // }
+    // check kabletop output capacity
+    let capacity = {
+        let ckb: Capacity = output.capacity().unpack();
+        ckb.as_u64()
+    };
+    if capacity != (staking_ckb + bet_ckb) * 2 {
+        return Err(anyhow!("kabletop output capacity is incorrect"));
+    }
 
-    // // check wether two nft lists from kabletop args match both their nft cells'
-    // let user1_lock_script = helper::sighash_script(&user1_pkhash[..]);
-    // let user2_lock_script = helper::sighash_script(&user2_pkhash[..]);
-    // let type_script = {
-    //     let wallet = helper::wallet_script(keystore::COMPOSER_PUBHASH.clone().to_vec());
-    //     helper::nft_script(wallet.calc_script_hash().raw_data().to_vec())
-    // };
-    // let mut user1_cell_nfts = vec![];
-    // let mut user2_cell_nfts = vec![];
-    // tx.outputs_with_data_iter()
-    //     .for_each(|(output, data)| {
-    //         let mut userx_cell_nfts: Option<&mut Vec<[u8; 20]>> = None;
-    //         if let Some(script) = output.type_().to_opt() {
-    //             if type_script == script {
-    //                 if output.lock() == user1_lock_script {
-    //                     userx_cell_nfts = Some(&mut user1_cell_nfts);
-    //                 } else if output.lock() == user2_lock_script {
-    //                     userx_cell_nfts = Some(&mut user2_cell_nfts);
-    //                 }
-    //             }
-    //         }
-    //         if let Some(cell_nfts) = userx_cell_nfts {
-    //             let mut data = data.to_vec();
-    //             let n = data.len() / 20;
-    //             for _ in 0..n {
-    //                 cell_nfts.push(data[..20].try_into().unwrap());
-    //                 data = data[20..].to_vec();
-    //             }
-    //         }
-    //     });
-    // helper::blake160_intersect(&mut user1_nfts, &mut user1_cell_nfts);
-    // helper::blake160_intersect(&mut user2_nfts, &mut user2_cell_nfts);
-    // if user1_nfts.len() > 0 || user2_nfts.len() > 0 {
-    //     return Err(anyhow!("some of two users haven't supplied correct nft cells"));
-    // }
+    // check wether two nft lists from kabletop args match both their nft cells'
+    let user1_lock_script = helper::sighash_script(&user1_pkhash[..]);
+    let user2_lock_script = helper::sighash_script(&user2_pkhash[..]);
+    let type_script = {
+        let wallet = helper::wallet_script(keystore::COMPOSER_PUBHASH.clone().to_vec());
+        helper::nft_script(wallet.calc_script_hash().raw_data().to_vec())
+    };
+    let mut user1_cell_nfts = vec![];
+    let mut user2_cell_nfts = vec![];
+    tx.outputs_with_data_iter()
+        .for_each(|(output, data)| {
+            let mut userx_cell_nfts: Option<&mut Vec<[u8; 20]>> = None;
+            if let Some(script) = output.type_().to_opt() {
+                if type_script == script {
+                    if output.lock() == user1_lock_script {
+                        userx_cell_nfts = Some(&mut user1_cell_nfts);
+                    } else if output.lock() == user2_lock_script {
+                        userx_cell_nfts = Some(&mut user2_cell_nfts);
+                    }
+                }
+            }
+            if let Some(cell_nfts) = userx_cell_nfts {
+                let mut data = data.to_vec();
+                let n = data.len() / 20;
+                for _ in 0..n {
+                    cell_nfts.push(data[..20].try_into().unwrap());
+                    data = data[20..].to_vec();
+                }
+            }
+        });
+    helper::blake160_intersect(&mut user1_nfts, &mut user1_cell_nfts);
+    helper::blake160_intersect(&mut user2_nfts, &mut user2_cell_nfts);
+    if user1_nfts.len() > 0 || user2_nfts.len() > 0 {
+        return Err(anyhow!("some of two users haven't supplied correct nft cells"));
+    }
 
     // sign tx
     let tx = signer::sign(tx, &privkey, &vec![], &|input| {

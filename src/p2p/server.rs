@@ -104,7 +104,7 @@ impl Server {
 												&Wrapper::Reply(Payload { name: payload.name, body })
 											).unwrap()
 										};
-										client.send_message(&Message::text(response)).expect("send server response to client")
+										client.send_message(&Message::text(response)).expect("send server response to client");
 									} else {
 										panic!("method {} can't find in server registry table", payload.name);
 									}
@@ -138,7 +138,7 @@ impl Server {
 						client.send_message(&Message::text(message)).expect("send server request to client")
 					}
 					// check connection alive status
-					if now.duration_since(last_ping).unwrap() > Duration::from_secs(6) {
+					if now.duration_since(last_ping).unwrap() > Duration::from_secs(8) {
 						break
 					}
 					thread::sleep(Duration::from_millis(sleep_ms));

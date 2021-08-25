@@ -193,13 +193,16 @@ pub async fn build_tx_purchase_nft_package(package_count: u8) -> Result<Transact
         return Err(anyhow!("composer hasn't composed any NFTs yet."));
     }
 
-    // check user if has created a nft store
+    // check user if has created a nft store or on the right status
     let search_key = SearchKey::new(wallet_script.clone().into(), ScriptType::Lock)
         .filter(user_payment_script.clone().into());
     let wallet_cell = rpc::get_live_cells(search_key, 1, None).await?.objects;
-    if wallet_cell.is_empty() || wallet_cell[0].output_data.first() != Some(&0) {
-        return Err(anyhow!("user hasn't owned a NFT store without payment status."));
+    if wallet_cell.is_empty() {
+        return Err(anyhow!("user hasn't owned a NFT store."));
     }
+	if wallet_cell[0].output_data.first() != Some(&0) {
+        return Err(anyhow!("NFT store's currently on reveal status."));
+	}
 
     // prepare input cell
     let input = CellInput::new_builder()

@@ -187,8 +187,6 @@ pub async fn complete_tx_with_nft_cells(
                     data = data[20..].to_vec();
                     nfts.push(nft);
                 }
-                let ckb: Capacity = cell.output.capacity().unpack();
-                capacity += ckb.as_u64();
 				let mut intersected = false;
 				if blake160_intersect(&mut nfts, &mut required_nfts).len() > 0 {
 					// check whether destory shared nfts
@@ -204,6 +202,8 @@ pub async fn complete_tx_with_nft_cells(
 				intersected
             })
             .map(|cell| {
+                let ckb: Capacity = cell.output.capacity().unpack();
+                capacity += ckb.as_u64();
                 CellInput::new_builder()
                     .previous_output(cell.out_point.clone())
                     .build()
