@@ -71,13 +71,12 @@ impl Client {
 			fn _send<M: ws::Message>(client: &mut WsClient<TcpStream>, msg: M, callback: &dyn Fn()) -> bool {
 				match client.send_message(&msg) {
 					Ok(_) => true,
-					Err(WebSocketError::IoError(err)) => {
-						if err.kind() == ErrorKind::ConnectionReset {
+					Err(WebSocketError::IoError(err)) => match err.kind() {
+						ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted => {
 							callback();
 							false
-						} else {
-							panic!("client send error: {}", err);
-						}
+						},
+						_ => panic!("unknown client send error: {:?}", err.kind())
 					},
 					Err(err) => Err(err).expect("client send")
 				}

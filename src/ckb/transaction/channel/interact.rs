@@ -53,7 +53,7 @@ use std::convert::TryInto;
 
 // prepare kabletop tx with user1-part filled
 pub async fn prepare_channel_tx(
-    staking_ckb: u64, bet_ckb: u64, deck_size: u8, nfts: &Vec<[u8; 20]>, pkhash: &[u8; 20], hashes: &Vec<Byte32>
+    staking_ckb: u64, bet_ckb: u64, deck_size: u8, nfts: Vec<[u8; 20]>, pkhash: [u8; 20], hashes: Vec<Byte32>
 ) -> Result<TransactionView> {
     // prepare lock_args
     let block_number = rpc::get_tip_block_number();
@@ -68,7 +68,7 @@ pub async fn prepare_channel_tx(
         .lock_code_hash(sighash_hash.into())
 		.lua_code_hashes(hashes.into())
         .user1_pkhash(pkhash.into())
-        .user1_nfts(nfts.into())
+        .user1_nfts(nfts.clone().into())
         .build();
     
     // prepare output
@@ -95,8 +95,8 @@ pub async fn prepare_channel_tx(
         .output(output)
         .output_data(Bytes::from(vec![]).pack())
         .build();
-    let tx = helper::complete_tx_with_nft_cells(tx, pkhash, &keystore::COMPOSER_PUBHASH, nfts.clone(), false).await?;
-    let tx = helper::complete_tx_with_sighash_cells(tx, pkhash, helper::fee("0.05")).await?;
+    let tx = helper::complete_tx_with_nft_cells(tx, &pkhash, &keystore::COMPOSER_PUBHASH, nfts, false).await?;
+    let tx = helper::complete_tx_with_sighash_cells(tx, &pkhash, helper::fee("0.05")).await?;
     let tx = helper::add_code_celldep(tx, OutPoint::new(_C.kabletop.tx_hash.clone(), 0));
 
     Ok(tx)
@@ -104,7 +104,7 @@ pub async fn prepare_channel_tx(
 
 // complete kabeltop tx with user2-part filled
 pub async fn complete_channel_tx(
-    tx: TransactionView, staking_ckb: u64, bet_ckb: u64, deck_size: u8, nfts: &Vec<[u8; 20]>, pkhash: &[u8; 20], hashes: &Vec<Byte32>
+    tx: TransactionView, staking_ckb: u64, bet_ckb: u64, deck_size: u8, nfts: Vec<[u8; 20]>, pkhash: [u8; 20], hashes: Vec<Byte32>
 ) -> Result<TransactionView> {
     // check and complete kabletop args
     let mut tx_outputs: Vec<CellOutput> = tx.outputs().into_iter().map(|output| output).collect();
@@ -115,7 +115,7 @@ pub async fn complete_channel_tx(
     };
     if u64::from(kabletop_args.user_staking_ckb())     != staking_ckb
         || u8::from(kabletop_args.user_deck_size())    != deck_size 
-		|| &Vec::from(kabletop_args.lua_code_hashes()) != hashes {
+		|| Vec::from(kabletop_args.lua_code_hashes())  != hashes {
         return Err(anyhow!("some of kabletop args mismatched"));
     }
     if deck_size as usize != nfts.len() {
@@ -124,7 +124,7 @@ pub async fn complete_channel_tx(
     let kabletop_args = kabletop_args
         .as_builder()
         .user2_pkhash(pkhash.into())
-        .user2_nfts(nfts.into())
+        .user2_nfts(nfts.clone().into())
         .build();
 
     // check and double output capacity
@@ -148,15 +148,15 @@ pub async fn complete_channel_tx(
         .as_advanced_builder()
         .set_outputs(tx_outputs)
         .build();
-    let tx = helper::complete_tx_with_nft_cells(tx, pkhash, &keystore::COMPOSER_PUBHASH, nfts.clone(), false).await?;
-    let tx = helper::complete_tx_with_sighash_cells(tx, pkhash, helper::fee("0.05")).await?;
+    let tx = helper::complete_tx_with_nft_cells(tx, &pkhash, &keystore::COMPOSER_PUBHASH, nfts, false).await?;
+    let tx = helper::complete_tx_with_sighash_cells(tx, &pkhash, helper::fee("0.05")).await?;
 
     Ok(tx)
 }
 
 // check kabletop args and sign channel tx
 pub fn sign_channel_tx(
-    tx: TransactionView, staking_ckb: u64, bet_ckb: u64, deck_size: u8, nfts: &Vec<[u8; 20]>, privkey: &Privkey
+    tx: TransactionView, staking_ckb: u64, bet_ckb: u64, deck_size: u8, nfts: Vec<[u8; 20]>, privkey: &Privkey
 ) -> Result<TransactionView> {
     // check kabletop args
     let output = tx.output(0).ok_or(anyhow!("tx's output is empty"))?;
@@ -167,8 +167,8 @@ pub fn sign_channel_tx(
     let pkhash = helper::privkey_to_pkhash(&privkey);
     let user1_pkhash = <[u8; 20]>::from(kabletop_args.user1_pkhash());
     let user2_pkhash = <[u8; 20]>::from(kabletop_args.user2_pkhash());
-    let mut user1_nfts = &mut Vec::from(kabletop_args.user1_nfts());
-    let mut user2_nfts = &mut Vec::from(kabletop_args.user2_nfts());
+    let mut user1_nfts = Vec::from(kabletop_args.user1_nfts());
+    let mut user2_nfts = Vec::from(kabletop_args.user2_nfts());
     if u64::from(kabletop_args.user_staking_ckb())  != staking_ckb
         || u8::from(kabletop_args.user_deck_size()) != deck_size
         || (user1_pkhash == pkhash && user1_nfts != nfts)
@@ -222,16 +222,16 @@ pub fn sign_channel_tx(
     }
 
     // sign tx
-    let tx = signer::sign(tx, &privkey, &vec![], &|input| {
+    let tx = signer::sign(tx, &privkey, vec![], Box::new(move |input| {
         let bytes: Bytes = input.lock().args().unpack();
         bytes.to_vec() == pkhash
-    });
+    }));
     Ok(tx)
 }
 
 // check the last one of imported kabeltop [signed_rounds] wether matches its corrensponding signature
 pub fn check_channel_round(
-    script_hash: &[u8; 32], capacity: u64, signed_rounds: &Vec<(Round, Signature)>, expect_pkhash: &[u8; 20]
+    script_hash: [u8; 32], capacity: u64, signed_rounds: Vec<(Round, Signature)>, expect_pkhash: [u8; 20]
 ) -> Result<bool> {
     let mut digest = [0u8; 32];
     let mut last_signature: Option<&Signature> = None;
@@ -243,7 +243,7 @@ pub fn check_channel_round(
                 hasher.update(&digest);
                 hasher.update(&last_signature.serialize());
             } else {
-                hasher.update(script_hash);
+                hasher.update(&script_hash);
                 hasher.update(&capacity.to_le_bytes());
             }
             hasher.update(round.as_slice());
@@ -255,7 +255,7 @@ pub fn check_channel_round(
     if let Some(verify_signature) = last_signature {
         let pkhash = {
             let pubkey = verify_signature.recover(&Message::from(digest))?;
-            &helper::blake160(&pubkey.serialize())
+            helper::blake160(&pubkey.serialize())
         };
         Ok(pkhash == expect_pkhash)
     } else {
@@ -266,7 +266,7 @@ pub fn check_channel_round(
 
 // sign the new [unsiged_round] using [privkey]
 pub fn sign_channel_round(
-    script_hash: Byte32, capacity: u64, previous_rounds: &Vec<(Round, Signature)>, unsiged_round: &Round, privkey: &Privkey
+    script_hash: Byte32, capacity: u64, previous_rounds: Vec<(Round, Signature)>, unsiged_round: Round, privkey: &Privkey
 ) -> Result<Signature> {
     let rounds_with_lastone_unsigned = {
         let mut rounds = previous_rounds.clone();
@@ -296,7 +296,7 @@ pub fn sign_channel_round(
 }
 
 // make a kabletop round molecule format data
-pub fn make_round(user_type: u8, operations: &Vec<String>) -> Round {
+pub fn make_round(user_type: u8, operations: Vec<String>) -> Round {
 	let operations = operations
 		.iter()
 		.map(|bytes| bytes.as_bytes().into())

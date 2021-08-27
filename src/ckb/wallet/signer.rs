@@ -12,7 +12,7 @@ use std::collections::HashMap;
 // sign a whole [tx] using private [key], the [extra_witnesses] is some external args which just placed into witness part
 // the function just supposes two or more cells that are in one group are all close together
 pub fn sign(
-    tx: TransactionView, key: &Privkey, extra_witnesses: &Vec<WitnessArgs>, enable_sign: &dyn Fn(&CellOutput) -> bool
+    tx: TransactionView, key: &Privkey, extra_witnesses: Vec<WitnessArgs>, enable_sign: Box<dyn Fn(&CellOutput) -> bool>
 ) -> TransactionView {
     let inputs = tx
         .inputs()

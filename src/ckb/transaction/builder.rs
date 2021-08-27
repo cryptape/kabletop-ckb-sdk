@@ -88,7 +88,7 @@ pub async fn build_tx_compose_nft(
     let tx = helper::add_code_celldep(tx, OutPoint::new(_C.wallet.tx_hash.clone(), 0));
 
     // sign tx
-    let tx = signer::sign(tx, &keystore::COMPOSER_PRIVKEY, &vec![], &|_| true);
+    let tx = signer::sign(tx, &keystore::COMPOSER_PRIVKEY, vec![], Box::new(|_| true));
     Ok(tx)
 }
 
@@ -155,7 +155,7 @@ pub async fn build_tx_create_nft_store() -> Result<TransactionView> {
     let tx = helper::add_code_celldep(tx, config_cell[0].out_point.clone());
 
     // sign tx
-    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, &vec![], &|_| true);
+    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![], Box::new(|_| true));
     Ok(tx)
 }
 
@@ -239,7 +239,7 @@ pub async fn build_tx_purchase_nft_package(package_count: u8) -> Result<Transact
     let tx = helper::add_code_celldep(tx, config_cell[0].out_point.clone());
 
     // sign tx
-    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, &vec![], &|_| true);
+    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![], Box::new(|_| true));
     Ok(tx)
 }
 
@@ -342,7 +342,7 @@ pub async fn build_tx_reveal_nft_package() -> Result<TransactionView> {
     let tx = helper::add_headerdep(tx, block.header());
 
     // sign tx
-    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, &vec![], &|_| true);
+    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![], Box::new(|_| true));
     Ok(tx)
 }
 
@@ -354,7 +354,7 @@ pub async fn build_tx_discard_nft(discard_nfts: &Vec<[u8; 20]>) -> Result<Transa
     let tx = TransactionBuilder::default().build();
 	let tx = helper::complete_tx_with_nft_cells(tx, &keystore::USER_PUBHASH, &keystore::COMPOSER_PUBHASH, discard_nfts.clone(), true).await?;
 	let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
-	let tx = signer::sign(tx, &keystore::USER_PRIVKEY, &vec![], &|_| true);
+	let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![], Box::new(|_| true));
 	Ok(tx)
 }
 
@@ -385,9 +385,10 @@ pub async fn build_tx_discard_nft(discard_nfts: &Vec<[u8; 20]>) -> Result<Transa
 * ]
 */
 pub async fn build_tx_challenge_channel(
-    channel_script: Script, channel_ckb: u64, challenge_data: protocol::Challenge, rounds: &Vec<(protocol::Round, Signature)>
+    channel_args: Vec<u8>, channel_hash: [u8; 32], channel_ckb: u64, challenge_data: protocol::Challenge, rounds: &Vec<(protocol::Round, Signature)>
 ) -> Result<TransactionView> {
     // make sure channel stays open
+	let channel_script = helper::kabletop_script(channel_args);
     let search_key = SearchKey::new(channel_script.clone().into(), ScriptType::Lock);
     let channel_cell = rpc::get_live_cells(search_key, 1, None).await?.objects;
     if channel_cell.is_empty() {
@@ -413,11 +414,15 @@ pub async fn build_tx_challenge_channel(
 	};
     let witnesses = rounds
         .iter()
-        .map(|(round, signature)| {
-            WitnessArgs::new_builder()
-                .lock(Some(Bytes::from(signature.serialize())).pack())
-                .input_type(Some(Bytes::from(round.as_slice().to_vec())).pack())
-                .build()
+		.enumerate()
+        .map(|(i, (round, signature))| {
+			let mut witness = WitnessArgs::new_builder()
+				.lock(Some(Bytes::from(signature.serialize())).pack())
+				.input_type(Some(Bytes::from(round.as_slice().to_vec())).pack());
+			if i == 0 {
+				witness = witness.output_type(Some(Bytes::from(channel_hash.to_vec())).pack());
+			}
+			witness.build()
         })
         .collect::<Vec<_>>();
     
@@ -429,7 +434,7 @@ pub async fn build_tx_challenge_channel(
         .build();
     let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
     let tx = helper::add_code_celldep(tx, OutPoint::new(_C.kabletop.tx_hash.clone(), 0));
-    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, &witnesses, &|_| true);
+    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, witnesses, Box::new(|_| true));
 
     Ok(tx)
 }
@@ -478,10 +483,13 @@ pub async fn build_tx_challenge_channel(
 * ]
 */
 pub async fn build_tx_close_channel(
-    channel_script: Script, rounds: &Vec<(protocol::Round, Signature)>, winner: u8, from_challenge: bool
+    channel_args: Vec<u8>, channel_hash: [u8; 32], rounds: Vec<(protocol::Round, Signature)>, winner: u8, from_challenge: bool
 ) -> Result<TransactionView> {
+	if rounds.is_empty() {
+		return Err(anyhow!("kabletop rounds is empty"));
+	}
     // make sure channel stays open
-    let search_key = SearchKey::new(channel_script.clone().into(), ScriptType::Lock);
+    let search_key = SearchKey::new(helper::kabletop_script(channel_args).into(), ScriptType::Lock);
     let channel_cell = rpc::get_live_cells(search_key, 1, None).await?.objects;
     if channel_cell.is_empty() {
         return Err(anyhow!("channel with specified channel_script is non-existent"));
@@ -495,11 +503,15 @@ pub async fn build_tx_close_channel(
     }
     let witnesses = rounds
         .iter()
-        .map(|(round, signature)| {
-            WitnessArgs::new_builder()
-                .lock(Some(Bytes::from(signature.serialize())).pack())
-                .input_type(Some(Bytes::from(round.as_slice().to_vec())).pack())
-                .build()
+		.enumerate()
+        .map(|(i, (round, signature))| {
+			let mut witness = WitnessArgs::new_builder()
+				.lock(Some(Bytes::from(signature.serialize())).pack())
+				.input_type(Some(Bytes::from(round.as_slice().to_vec())).pack());
+			if i == 0 {
+				witness = witness.output_type(Some(Bytes::from(channel_hash.to_vec())).pack());
+			}
+			witness.build()
         })
         .collect::<Vec<_>>();
 
@@ -544,7 +556,7 @@ pub async fn build_tx_close_channel(
         .build();
     let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
     let tx = helper::add_code_celldep(tx, OutPoint::new(_C.kabletop.tx_hash.clone(), 0));
-    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, &witnesses, &|_| true);
+    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, witnesses, Box::new(|_| true));
 
     Ok(tx)
 }
@@ -557,7 +569,9 @@ pub async fn build_tx_close_channel(
 mod test {
     use ckb_sdk::rpc::HttpRpcClient;
     use futures::executor::block_on;
-    use ckb_types::core::TransactionView;
+    use ckb_types::{
+		core::TransactionView, prelude::*
+	};
     use ckb_jsonrpc_types::TransactionView as JsonTxView;
     use ckb_crypto::secp::Privkey;
     use crate::{
@@ -662,16 +676,16 @@ mod test {
         };
 
         // user1 prepare
-        let tx = block_on(interact::prepare_channel_tx(staking_ckb, bet_ckb, deck_size, &user1_nfts, &user1_pkhash, &vec![]))
+        let tx = block_on(interact::prepare_channel_tx(staking_ckb, bet_ckb, deck_size, user1_nfts.clone(), user1_pkhash.clone(), vec![]))
             .expect("prepare_channel_tx");
         // user2 complete
-        let tx = block_on(interact::complete_channel_tx(tx, staking_ckb, bet_ckb, deck_size, &user2_nfts, &user2_pkhash, &vec![]))
+        let tx = block_on(interact::complete_channel_tx(tx, staking_ckb, bet_ckb, deck_size, user2_nfts.clone(), user2_pkhash.clone(), vec![]))
             .expect("complete_channel_tx");
         // user2 sign
-        let tx = interact::sign_channel_tx(tx, staking_ckb, bet_ckb, deck_size, &user2_nfts, &user2_privkey)
+        let tx = interact::sign_channel_tx(tx, staking_ckb, bet_ckb, deck_size, user2_nfts, &user2_privkey)
             .expect("user2 sign_channel_tx");
         // user1 sign
-        let tx = interact::sign_channel_tx(tx, staking_ckb, bet_ckb, deck_size, &user1_nfts, &user1_privkey)
+        let tx = interact::sign_channel_tx(tx, staking_ckb, bet_ckb, deck_size, user1_nfts, &user1_privkey)
             .expect("user1 sign_channel_tx");
 
         send_transaction(tx, "open_channel");
@@ -716,15 +730,16 @@ mod test {
 		.for_each(|(user_type, operations)| {
 			let round = round(user_type, operations);
 			let signature = match user_type {
-				1 => interact::sign_channel_round(script.calc_script_hash(), ckb, &previous_rounds, &round, &user2_privkey),
-				2 => interact::sign_channel_round(script.calc_script_hash(), ckb, &previous_rounds, &round, &user1_privkey),
+				1 => interact::sign_channel_round(script.calc_script_hash(), ckb, previous_rounds.clone(), round.clone(), &user2_privkey),
+				2 => interact::sign_channel_round(script.calc_script_hash(), ckb, previous_rounds.clone(), round.clone(), &user1_privkey),
 				_ => panic!("unknown user type")
 			};
 			previous_rounds.push((round, signature.unwrap()));
 		});
 		
 		// prepare tx
-		let tx = block_on(builder::build_tx_close_channel(script, &previous_rounds, 1, false)).expect("close channel");
+		let tx = block_on(builder::build_tx_close_channel(
+			script.args().as_slice().to_vec(), tx.hash.pack().unpack(), previous_rounds, 1, false)).expect("close channel");
 		send_transaction(tx, "close_channel");
 	}
 
@@ -764,8 +779,8 @@ mod test {
 		.for_each(|(user_type, operations)| {
 			let round = round(user_type, operations);
 			let signature = match user_type {
-				1 => interact::sign_channel_round(script.calc_script_hash(), ckb, &previous_rounds, &round, &user2_privkey),
-				2 => interact::sign_channel_round(script.calc_script_hash(), ckb, &previous_rounds, &round, &user1_privkey),
+				1 => interact::sign_channel_round(script.calc_script_hash(), ckb, previous_rounds.clone(), round.clone(), &user2_privkey),
+				2 => interact::sign_channel_round(script.calc_script_hash(), ckb, previous_rounds.clone(), round.clone(), &user1_privkey),
 				_ => panic!("unknown user type")
 			};
 			previous_rounds.push((round, signature.unwrap()));
@@ -782,7 +797,8 @@ mod test {
 			.build();
 
 		// prepare tx
-		let tx = block_on(builder::build_tx_challenge_channel(script, ckb, challenge, &previous_rounds)).expect("challenge channel");
+		let tx = block_on(builder::build_tx_challenge_channel(
+			script.args().as_slice().to_vec(), tx.hash.pack().unpack(), ckb, challenge, &previous_rounds)).expect("challenge channel");
 		send_transaction(tx, "challenge_channel");
 	}
 }
