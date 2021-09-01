@@ -58,8 +58,8 @@ pub async fn prepare_channel_tx(
     // prepare lock_args
     let block_number = rpc::get_tip_block_number();
     let sighash_hash = _G.sighash_script.code_hash().clone();
-    if deck_size as usize != nfts.len() {
-        return Err(anyhow!("number of nft mismatch specified deck size"));
+    if deck_size < nfts.len() as u8 {
+        return Err(anyhow!("number of nft beyond specified deck size"));
     }
     let kabletop_args = Args::new_builder()
         .user_staking_ckb(staking_ckb.into())
@@ -118,8 +118,8 @@ pub async fn complete_channel_tx(
 		|| Vec::from(kabletop_args.lua_code_hashes())  != hashes {
         return Err(anyhow!("some of kabletop args mismatched"));
     }
-    if deck_size as usize != nfts.len() {
-        return Err(anyhow!("number of nft mismatch specified deck size"));
+    if deck_size < nfts.len() as u8 {
+        return Err(anyhow!("number of nft beyond specified deck size"));
     }
     let kabletop_args = kabletop_args
         .as_builder()
