@@ -109,7 +109,12 @@ pub async fn complete_tx_with_sighash_cells(tx: TransactionView, pubkey_hash: &[
             .objects
             .iter()
             .filter(|cell| {
-                if offered_capacity.as_u64() >= required_capacity.as_u64() {
+				let is_contract = vec![&_C.nft.tx_hash, &_C.wallet.tx_hash, &_C.payment.tx_hash, &_C.kabletop.tx_hash]
+					.iter()
+					.any(|&hash| hash == &cell.out_point.tx_hash());
+                if is_contract
+					|| cell.output.type_().is_some()
+					|| offered_capacity.as_u64() >= required_capacity.as_u64() {
                     return false;
                 }
                 let input_capacity = Capacity::shannons(cell.output.capacity().unpack());
@@ -155,7 +160,7 @@ pub async fn complete_tx_with_sighash_cells(tx: TransactionView, pubkey_hash: &[
 }
 
 // collect and apply nft cells locked by [pubkey_hash] to [tx], the APPLY means put collected nft cells into input part
-// and transfer them all into output part, the tx won't obtain any nft cells if [destory] is false
+// and transfer them all into output part, the tx won't obtain any nft cells if [discard] is false
 //
 // all nft cells are collected by [nfts]
 pub async fn complete_tx_with_nft_cells(
@@ -220,11 +225,21 @@ pub async fn complete_tx_with_nft_cells(
     }
 
     // turn all searched nft cells into one output cell
-    let tx_output = CellOutput::new_builder()
+    let mut tx_output = CellOutput::new_builder()
         .lock(lock_script)
-        .type_(Some(type_script).pack())
         .capacity(Capacity::shannons(capacity).pack())
-        .build();
+		.build();
+	
+	if tx_output_data.is_empty() {
+		tx_output = tx_output
+			.as_builder()
+			.build();
+	} else {
+		tx_output = tx_output
+			.as_builder()
+			.type_(Some(type_script).pack())
+			.build();
+	}
 
     // generate new transaction
     let tx = tx

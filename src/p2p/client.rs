@@ -20,10 +20,13 @@ use std::{
 use super::{
 	Wrapper, Payload, Error, Caller
 };
+use futures::{
+	future::BoxFuture, executor::block_on
+};
 
 // a client instance connecting to server
 pub struct Client {
-	client_registry: HashMap<String, Box<dyn Fn(Value) -> Result<Value, String> + Send + 'static>>,
+	client_registry: HashMap<String, Box<dyn Fn(Value) -> BoxFuture<'static, Result<Value, String>> + Send + 'static>>,
 	server_registry: Vec<String>,
 	socket:          String
 }
@@ -40,7 +43,7 @@ impl Client {
 	// register a function to respond server request
 	pub fn register<F>(mut self, name: &str, method: F) -> Self
 		where
-			F: Fn(Value) -> Result<Value, String> + Send + 'static
+			F: Fn(Value) -> BoxFuture<'static, Result<Value, String>> + Send + 'static
 	{
 		self.client_registry.insert(String::from(name), Box::new(method));
 		self
@@ -83,6 +86,7 @@ impl Client {
 			}
 			let mut last_pong = SystemTime::now();
 			let mut last_ping = SystemTime::now();
+			let mut future_responses = vec![];
 			loop {
 				let now = SystemTime::now();
 				// receiving response and calling messages from server, client's recv_messsage method will be blocked
@@ -97,19 +101,22 @@ impl Client {
 								// check wether message is in the client registry table
 								if let Some(function) = self.client_registry.get(&payload.name) {
 									let params = from_str(payload.body.as_str()).unwrap();
-									let response = {
-										let body: String;
-										match function(params) {
-											Ok(result)  => body = to_string(&result).unwrap(),
-											Err(reason) => body = to_string(&json!(Error { reason })).unwrap()
-										}
-										to_string(
-											&Wrapper::Reply(Payload { name: payload.name, body })
-										).unwrap()
-									};
-									if !_send(&mut client, Message::text(response), &callback) {
-										break
-									}
+									let (send, receive) = channel();
+									let future = function(params);
+									thread::spawn(move || {
+										let body;
+										let response = {
+											match block_on(async move { future.await }) {
+												Ok(result)  => body = to_string(&result).unwrap(),
+												Err(reason) => body = to_string(&json!(Error { reason })).unwrap()
+											}
+											to_string(
+												&Wrapper::Reply(Payload { name: payload.name, body })
+											).unwrap()
+										};
+										send.send(response).unwrap();
+									});
+									future_responses.push(receive);
 								} else {
 									panic!("message {} isn't registered in server registry table", payload.name);
 								}
@@ -158,8 +165,25 @@ impl Client {
 					}
 					last_ping = now;
 				}
+				// handle all of future responses
+				let mut ok = true;
+				future_responses = future_responses
+					.into_iter()
+					.filter(|receive| {
+						if let Ok(response) = receive.try_recv() {
+							ok = _send(&mut client, Message::text(response), &callback);
+							false
+						} else {
+							true
+						}
+					})
+					.collect::<Vec<_>>();
+				if !ok {
+					break
+				}
 				thread::sleep(Duration::from_millis(sleep_ms));
 			}
+			println!("p2p client thread CLOSED");
 		});
 		Ok(ClientSender::new(writer, server_receiver))
 	}

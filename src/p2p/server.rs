@@ -22,6 +22,9 @@ use anyhow::{
 use super::{
 	Wrapper, Payload, Error, Caller
 };
+use futures::{
+	future::BoxFuture, executor::block_on
+};
 
 lazy_static! {
 	static ref ACTIVE: RwLock<bool> = RwLock::new(false);
@@ -30,7 +33,7 @@ lazy_static! {
 // a server instance for handling registering both request/response methods and listening at none-blocking mode,
 // but only supports one connection at the same time
 pub struct Server {
-	server_registry: HashMap<String, Box<dyn Fn(Value) -> Result<Value, String> + Send + 'static>>,
+	server_registry: HashMap<String, Box<dyn Fn(Value) -> BoxFuture<'static, Result<Value, String>> + Send + 'static>>,
 	client_registry: Vec<String>,
 	socket:          SocketAddr
 }
@@ -47,7 +50,7 @@ impl Server {
 	// register a function instance to respond client request
 	pub fn register<F>(mut self, name: &str, method: F) -> Self
 		where
-			F: Fn(Value) -> Result<Value, String> + Send + 'static
+			F: Fn(Value) -> BoxFuture<'static, Result<Value, String>> + Send + 'static
 	{
 		self.server_registry.insert(String::from(name), Box::new(method));
 		self
@@ -94,6 +97,7 @@ impl Server {
 				thread::sleep(Duration::from_millis(sleep_ms));
 			}
 			let mut last_ping = SystemTime::now();
+			let mut future_responses = vec![];
 			loop {
 				let now = SystemTime::now();
 				// receiving calling messages from client
@@ -108,17 +112,22 @@ impl Server {
 								// searching in server response registry table
 								if let Some(function) = self.server_registry.get(&payload.name) {
 									let params = from_str(payload.body.as_str()).unwrap();
-									let response = {
-										let body: String;
-										match function(params) {
-											Ok(result)  => body = to_string(&result).unwrap(),
-											Err(reason) => body = to_string(&json!(Error { reason })).unwrap()
-										}
-										to_string(
-											&Wrapper::Reply(Payload { name: payload.name, body })
-										).unwrap()
-									};
-									client.send_message(&Message::text(response)).expect("send server response to client");
+									let (send, receive) = channel();
+									let future = function(params);
+									thread::spawn(move || {
+										let body;
+										let response = {
+											match block_on(async move { future.await }) {
+												Ok(result)  => body = to_string(&result).unwrap(),
+												Err(reason) => body = to_string(&json!(Error { reason })).unwrap()
+											}
+											to_string(
+												&Wrapper::Reply(Payload { name: payload.name, body })
+											).unwrap()
+										};
+										send.send(response).unwrap();
+									});
+									future_responses.push(receive);
 								} else {
 									panic!("method {} can't find in server registry table", payload.name);
 								}
@@ -155,10 +164,23 @@ impl Server {
 				if now.duration_since(last_ping).unwrap() > Duration::from_secs(8) {
 					break
 				}
+				// handle all of future responses
+				future_responses = future_responses
+					.into_iter()
+					.filter(|receive| {
+						if let Ok(response) = receive.try_recv() {
+							client.send_message(&Message::text(response)).expect("send server response to client");
+							false
+						} else {
+							true
+						}
+					})
+					.collect::<Vec<_>>();
 				thread::sleep(Duration::from_millis(sleep_ms));
 			}
 			*ACTIVE.write().unwrap() = false;
 			callback(false);
+			println!("p2p server thread CLOSED");
 		});
 		Ok(ServerClient::new(writer, client_receiver))
 	}

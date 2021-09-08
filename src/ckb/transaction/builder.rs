@@ -350,11 +350,94 @@ pub async fn build_tx_reveal_nft_package() -> Result<TransactionView> {
 * 
 * to help discard helpless nfts to save CKB locked by NFT cell
 */
-pub async fn build_tx_discard_nft(discard_nfts: &Vec<[u8; 20]>) -> Result<TransactionView> {
+pub async fn build_tx_discard_nft(discard_nfts: Vec<[u8; 20]>) -> Result<TransactionView> {
     let tx = TransactionBuilder::default().build();
-	let tx = helper::complete_tx_with_nft_cells(tx, &keystore::USER_PUBHASH, &keystore::COMPOSER_PUBHASH, discard_nfts.clone(), true).await?;
+	let tx = helper::complete_tx_with_nft_cells(tx, &keystore::USER_PUBHASH, &keystore::COMPOSER_PUBHASH, discard_nfts, true).await?;
+	let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
+	let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![], Box::new(|_| true));		
+	Ok(tx)
+}
+
+/* TRANSFER_NFT_CELL
+* 
+* to help transfer owned nfts to recevier address
+*/
+pub async fn build_tx_transfer_nft(transfer_nfts: Vec<[u8; 20]>, receiver_pkhash: [u8; 20]) -> Result<TransactionView> {
+	// prepare recevier nft cell
+    let lock_script = helper::sighash_script(&receiver_pkhash[..]);
+    let type_script = {
+        let wallet = helper::wallet_script(keystore::COMPOSER_PUBHASH.to_vec());
+        helper::nft_script(wallet.calc_script_hash().raw_data().to_vec())
+    };
+	let output_data = transfer_nfts
+		.iter()
+		.map(|nft| nft.to_vec())
+		.collect::<Vec<Vec<u8>>>()
+		.concat();
+    let receiver_output = CellOutput::new_builder()
+        .lock(lock_script)
+        .type_(Some(type_script).pack())
+		.build_exact_capacity(Capacity::bytes(output_data.len())?)?;
+
+	// complete transfer tx
+    let tx = TransactionBuilder::default()
+		.output(receiver_output)
+		.output_data(Bytes::from(output_data).pack())
+		.build();
+	let tx = helper::complete_tx_with_nft_cells(tx, &keystore::USER_PUBHASH, &keystore::COMPOSER_PUBHASH, transfer_nfts, true).await?;
 	let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
 	let tx = signer::sign(tx, &keystore::USER_PRIVKEY, vec![], Box::new(|_| true));
+	Ok(tx)
+}
+
+/* ISSUE_NFT_CELL
+* 
+* to additionally issue nfts to receiver address for TEST
+*/
+pub async fn build_tx_issue_nft(issue_nfts: Vec<[u8; 20]>, receiver_pkhash: [u8; 20]) -> Result<TransactionView> {
+    // prepare scripts
+    let wallet_script = helper::wallet_script(keystore::COMPOSER_PUBHASH.to_vec());
+    let payment_script = helper::payment_script(keystore::COMPOSER_PUBHASH.to_vec());
+
+    // prepare input cell
+    let search_key = SearchKey::new(wallet_script.clone().into(), ScriptType::Lock).filter(payment_script.clone().into());
+    let composer_cell = rpc::get_live_cells(search_key, 1, None).await?.objects;
+    if composer_cell.is_empty() {
+        return Err(anyhow!("composer hasn't composed any NFTs yet."));
+    }
+    let composer_input = CellInput::new_builder()
+        .previous_output(composer_cell[0].out_point.clone())
+        .build();
+
+	// prepare recevier nft cell
+    let lock_script = helper::sighash_script(&receiver_pkhash[..]);
+    let type_script = {
+        let wallet = helper::wallet_script(keystore::COMPOSER_PUBHASH.to_vec());
+        helper::nft_script(wallet.calc_script_hash().raw_data().to_vec())
+    };
+	let output_data = issue_nfts
+		.iter()
+		.map(|nft| nft.to_vec())
+		.collect::<Vec<Vec<u8>>>()
+		.concat();
+    let receiver_output = CellOutput::new_builder()
+        .lock(lock_script)
+        .type_(Some(type_script).pack())
+		.build_exact_capacity(Capacity::bytes(output_data.len())?)?;
+		
+	// complete tx
+	let tx = TransactionBuilder::default()
+		.input(composer_input)
+		.output(receiver_output)
+		.output(composer_cell[0].output.clone())
+		.output_data(Bytes::from(output_data).pack())
+		.output_data(composer_cell[0].output_data.pack())
+		.build();
+	let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::COMPOSER_PUBHASH, helper::fee("0.1")).await?;
+    let tx = helper::add_code_celldep(tx, OutPoint::new(_C.payment.tx_hash.clone(), 0));
+    let tx = helper::add_code_celldep(tx, OutPoint::new(_C.wallet.tx_hash.clone(), 0));
+    let tx = helper::add_code_celldep(tx, OutPoint::new(_C.nft.tx_hash.clone(), 0));
+	let tx = signer::sign(tx, &keystore::COMPOSER_PRIVKEY, vec![], Box::new(|_| true));
 	Ok(tx)
 }
 
@@ -652,8 +735,27 @@ mod test {
     #[test]
     fn test_build_tx_discard_nft() {
 		let discard = vec![helper::blake160(&[3u8])];
-        let tx = block_on(builder::build_tx_discard_nft(&discard)).expect("discard nft");
+        let tx = block_on(builder::build_tx_discard_nft(discard)).expect("discard nft");
         send_transaction(tx, "discard_nft");
+    }
+
+    #[test]
+    fn test_build_tx_transfer_nft() {
+		let transfer = vec![helper::blake160(&[3u8])];
+		let receiver = helper::blake160_to_byte20("b30e7cbeeb037e5d1f7e1939f733abed8d816db0").expect("blake160 to [u8; 20]");
+        let tx = block_on(builder::build_tx_transfer_nft(transfer, receiver)).expect("transfer nft");
+        send_transaction(tx, "transfer_nft");
+    }
+
+    #[test]
+    fn test_build_tx_issue_nft() {
+		let issue = default_nfts()
+			.iter()
+			.map(|&(nft, _)| nft)
+			.collect::<Vec<_>>();
+		let receiver = helper::blake160_to_byte20("b30e7cbeeb037e5d1f7e1939f733abed8d816db0").expect("blake160 to [u8; 20]");
+        let tx = block_on(builder::build_tx_issue_nft(issue, receiver)).expect("issue nft");
+        send_transaction(tx, "issue_nft");
     }
 
     #[test]

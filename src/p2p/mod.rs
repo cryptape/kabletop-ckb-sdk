@@ -57,10 +57,12 @@ mod test {
 	fn test_jsonrpc_success() {
 		let server = Server::new("0.0.0.0:11525")
 			.register("hello", |params| {
-				println!("Server => {:?}", params);
-				Ok(json!(Response {
-					value: String::from("hello: server responce")
-				}))
+				Box::pin(async move {
+					println!("Server => {:?}", params);
+					Ok(json!(Response {
+						value: String::from("hello: server responce")
+					}))
+				})
 			})
 			.register_call("world")
 			.listen(300, |active| println!("server_active = {}", active))
@@ -68,10 +70,12 @@ mod test {
 		let client = Client::new("ws://127.0.0.1:11525")
 			.register_call("hello")
 			.register("world", |params| {
-				println!("{:?}", params);
-				Ok(json!(Response {
-					value: String::from("world: client response")
-				}))
+				Box::pin(async move {
+					println!("{:?}", params);
+					Ok(json!(Response {
+						value: String::from("world: client response")
+					}))
+				})
 			})
 			.connect(300, || println!("client_active = false"))
 			.unwrap();
@@ -93,11 +97,10 @@ mod test {
 	fn test_jsonrpc_error() {
 		Server::new("0.0.0.0:11525")
 			.register("hello", |params| {
-				println!("Server => {:?}", params);
-				Err(String::from("bad hello result"))
-				// Ok(json!(Response {
-				// 	value: String::from("hello: server responce")
-				// }))
+				Box::pin(async move {
+					println!("Server => {:?}", params);
+					Err(String::from("bad hello result"))
+				})
 			})
 			.listen(300, |_| {})
 			.unwrap();
