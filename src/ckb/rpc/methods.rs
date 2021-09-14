@@ -31,7 +31,20 @@ lazy_static! {
 }
 
 pub fn get_genesis_block() -> Result<Block> {
-    get_block(0)
+	let mut result = Err(anyhow!("fetch genesis block failed over 5 times"));
+	for _ in 0..5 {
+		match get_block(0) {
+			Ok(block) => {
+				result = Ok(block);
+				break
+			},
+			Err(error) => {
+				println!("{} [retry]", error);
+				result = Err(error);
+			}
+		}
+	}
+	result
 }
 
 pub fn get_block(block_number: u64) -> Result<Block> {
@@ -81,14 +94,15 @@ pub fn send_transaction(tx: Transaction) -> Result<H256> {
 	}
 }
 
-pub fn get_tip_block_number() -> u64 {
-    CKB_CLIENT
+pub fn get_tip_block_number() -> Result<u64> {
+    let result = CKB_CLIENT
         .lock()
         .unwrap()
-        .get_tip_block_number()
-        .unwrap_or_else(|err| {
-            panic!("{}", err);
-        })
+        .get_tip_block_number();
+	match result {
+		Ok(number) => Ok(number),
+		Err(err)   => Err(anyhow!(err))
+	}
 }
 
 pub async fn get_live_cells(search_key: SearchKey, limit: u32, cursor: Option<JsonBytes>) -> Result<Pagination<ckb::Cell>> {

@@ -581,7 +581,7 @@ pub async fn build_tx_close_channel(
     // prepare input and witnesses
     let mut input = CellInput::new_builder().previous_output(channel_cell[0].out_point.clone());
     if from_challenge {
-        let block_number = rpc::get_tip_block_number();
+        let block_number = rpc::get_tip_block_number()?;
         input = input.since(block_number.pack());
     }
     let witnesses = rounds

@@ -28,7 +28,7 @@ pub struct Genesis {
 }
 
 // fetch some essential data like script and cell_deps from gensis block
-pub fn get_genesis_from_block() -> Result<Genesis> {
+fn get_genesis_from_block() -> Result<Genesis> {
     let block = rpc::methods::get_genesis_block()?;
     let sighash_tx = block
         .transactions()

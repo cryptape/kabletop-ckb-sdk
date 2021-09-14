@@ -56,7 +56,7 @@ pub async fn prepare_channel_tx(
     staking_ckb: u64, bet_ckb: u64, deck_size: u8, nfts: Vec<[u8; 20]>, pkhash: [u8; 20], hashes: Vec<Byte32>
 ) -> Result<TransactionView> {
     // prepare lock_args
-    let block_number = rpc::get_tip_block_number();
+    let block_number = rpc::get_tip_block_number()?;
     let sighash_hash = _G.sighash_script.code_hash().clone();
     if deck_size < nfts.len() as u8 {
         return Err(anyhow!("number of nft beyond specified deck size"));
