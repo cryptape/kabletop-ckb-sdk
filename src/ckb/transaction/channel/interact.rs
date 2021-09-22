@@ -113,9 +113,9 @@ pub async fn complete_channel_tx(
         let args: Bytes = output.lock().args().unpack();
         Args::new_unchecked(MolBytes::from(args.to_vec()))
     };
-    if u64::from(kabletop_args.user_staking_ckb())     != staking_ckb
-        || u8::from(kabletop_args.user_deck_size())    != deck_size 
-		|| Vec::from(kabletop_args.lua_code_hashes())  != hashes {
+    if u64::from(kabletop_args.user_staking_ckb())    != staking_ckb
+        || u8::from(kabletop_args.user_deck_size())   != deck_size 
+		|| Vec::from(kabletop_args.lua_code_hashes()) != hashes {
         return Err(anyhow!("some of kabletop args mismatched"));
     }
     if deck_size < nfts.len() as u8 {

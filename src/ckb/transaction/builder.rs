@@ -632,14 +632,17 @@ pub async fn build_tx_close_channel(
         .collect::<Result<Vec<_>, _>>()?;
     
     // close kabletop channel
-    let tx = TransactionBuilder::default()
+    let mut tx = TransactionBuilder::default()
         .input(input.build())
         .outputs(outputs)
         .outputs_data(vec![Bytes::default(), Bytes::default()].pack())
         .build();
-    let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
-    let tx = helper::add_code_celldep(tx, OutPoint::new(_C.kabletop.tx_hash.clone(), 0));
-    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, witnesses, Box::new(|_| true));
+    tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
+    tx = helper::add_code_celldep(tx, OutPoint::new(_C.kabletop.tx_hash.clone(), 0));
+	for luacode in &_C.luacodes {
+		tx = helper::add_code_celldep(tx, OutPoint::new(luacode.tx_hash.clone(), 0));
+	}
+    tx = signer::sign(tx, &keystore::USER_PRIVKEY, witnesses, Box::new(|_| true));
 
     Ok(tx)
 }

@@ -15,12 +15,19 @@ pub struct Contract {
 }
 
 #[derive(Deserialize)]
+pub struct Luacode {
+    pub tx_hash:   String,
+    pub data_hash: String,
+}
+
+#[derive(Deserialize)]
 pub struct Vars {
     pub common:   Common,
     pub nft:      Contract,
     pub wallet:   Contract,
     pub payment:  Contract,
     pub kabletop: Contract,
+	pub luacodes: Vec<Luacode>
 }
 
 // ckb types format from string format "Kabletop.toml" config file
@@ -48,7 +55,12 @@ pub mod ckb {
 
     pub struct Contract {
         pub tx_hash:   Byte32,
-        pub code_hash: Byte32,
+        pub code_hash: Byte32
+    }
+
+    pub struct Luacode {
+        pub tx_hash:   Byte32,
+        pub data_hash: Byte32
     }
 
     pub struct Vars {
@@ -57,6 +69,7 @@ pub mod ckb {
         pub wallet:   Contract,
         pub payment:  Contract,
         pub kabletop: Contract,
+		pub luacodes: Vec<Luacode>
     }
 
     fn privkey_to_keypair(privkey: &str) -> Keypair {
@@ -76,6 +89,15 @@ pub mod ckb {
                 tx_hash:   Byte32::new(helper::blake256_to_byte32(conf_contract.tx_hash.as_str()).unwrap()),
                 code_hash: Byte32::new(helper::blake256_to_byte32(conf_contract.code_hash.as_str()).unwrap())
             };
+            let luacodes = |conf_luacodes: Vec<conf::Luacode>| -> Vec<Luacode> {
+				conf_luacodes
+					.iter()
+					.map(|luacode| Luacode {
+						tx_hash:   Byte32::new(helper::blake256_to_byte32(luacode.tx_hash.as_str()).unwrap()),
+						data_hash: Byte32::new(helper::blake256_to_byte32(luacode.data_hash.as_str()).unwrap())
+					})
+					.collect::<Vec<_>>()
+            };
             let common = |conf_common: conf::Common| Common {
                 ckb_uri:         conf_common.ckb_uri,
                 ckb_indexer_uri: conf_common.ckb_indexer_uri,
@@ -87,7 +109,8 @@ pub mod ckb {
                 nft:      contract(conf_vars.nft),
                 wallet:   contract(conf_vars.wallet),
                 payment:  contract(conf_vars.payment),
-                kabletop: contract(conf_vars.kabletop)
+                kabletop: contract(conf_vars.kabletop),
+				luacodes: luacodes(conf_vars.luacodes)
             }
         }
     }

@@ -20,3 +20,7 @@ code_hash = "80d351c92602c4ad201d0cad2645ea02c45a026c7d70d92f79399dfaf8540ff4"
 [kabletop]
 tx_hash = "b52ddacaaa3d9bc3a6f5fa73a7065758cf63e3895ff475af349dcbab9b6de59c"
 code_hash = "bc6d8f75b9407adb55aaa8f47fe707f09fa6eb8583e0d09688e239a7a4f80656"
+
+[[luacodes]]
+tx_hash = "9a8a0f010938b07af709c1b6e080576c3e2483a3bec2fdfe9880d2013b6a4074"
+data_hash = "7a20111b1ad0e6a893c3f34ea064ddb4edf39b5dba6fada81268b4d38d938551"
