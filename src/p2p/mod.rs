@@ -55,7 +55,7 @@ mod test {
 
 	#[test]
 	fn test_jsonrpc_success() {
-		let server = Server::new("0.0.0.0:11525")
+		let mut server = Server::new("0.0.0.0:11525")
 			.register("hello", |params| {
 				Box::pin(async move {
 					println!("Server => {:?}", params);
@@ -65,8 +65,9 @@ mod test {
 				})
 			})
 			.register_call("world")
-			.listen(300, |active| println!("server_active = {}", active))
+			.listen(300, 1, |id, active| println!("#{} server_active = {}", id, active.is_some()))
 			.unwrap();
+		server.set_id(1);
 		let client = Client::new("ws://127.0.0.1:11525")
 			.register_call("hello")
 			.register("world", |params| {
@@ -102,7 +103,7 @@ mod test {
 					Err(String::from("bad hello result"))
 				})
 			})
-			.listen(300, |_| {})
+			.listen(300, 1, |_, _| {})
 			.unwrap();
 		let client = Client::new("ws://127.0.0.1:11525")
 			.register_call("hello")
