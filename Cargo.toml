@@ -1,5 +1,5 @@
 [package]
-name = "kabletop_sdk"
+name = "kabletop-ckb-sdk"
 version = "0.1.0"
 authors = ["liyukun@cryptape.com"]
 edition = "2018"

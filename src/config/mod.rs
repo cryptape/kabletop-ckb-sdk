@@ -10,7 +10,13 @@ use types::{
 };
 
 lazy_static! {
-    pub static ref VARS: ckb::Vars = load().expect("loading config");
+    pub static ref VARS: ckb::Vars = match load() {
+		Ok(vars) => vars,
+		Err(err) => {
+			println!("loading config error: {}", err);
+			ckb::Vars::default()
+		}
+	};
 }
 
 fn load() -> Result<ckb::Vars> {

@@ -26,7 +26,7 @@ use futures::{
 
 // a client instance connecting to server
 pub struct Client {
-	client_registry: HashMap<String, Box<dyn Fn(Value) -> BoxFuture<'static, Result<Value, String>> + Send + 'static>>,
+	client_registry: HashMap<String, Box<dyn Fn(i32, Value) -> BoxFuture<'static, Result<Value, String>> + Send + 'static>>,
 	server_registry: Vec<String>,
 	socket:          String
 }
@@ -43,7 +43,7 @@ impl Client {
 	// register a function to respond server request
 	pub fn register<F>(mut self, name: &str, method: F) -> Self
 		where
-			F: Fn(Value) -> BoxFuture<'static, Result<Value, String>> + Send + 'static
+			F: Fn(i32, Value) -> BoxFuture<'static, Result<Value, String>> + Send + 'static
 	{
 		self.client_registry.insert(String::from(name), Box::new(method));
 		self
@@ -102,7 +102,7 @@ impl Client {
 								if let Some(function) = self.client_registry.get(&payload.name) {
 									let params = from_str(payload.body.as_str()).unwrap();
 									let (send, receive) = channel();
-									let future = function(params);
+									let future = function(0, params);
 									thread::spawn(move || {
 										let body;
 										let response = {

@@ -32,11 +32,10 @@ lazy_static! {
 	static ref CLIENT: RwLock<HashSet<i32>> = RwLock::new(HashSet::new());
 	static ref KICKED_CLIENTS: RwLock<Vec<i32>> = RwLock::new(vec![]);
 	static ref SERVER_REGISTRY: RwLock<HashMap<String, 
-		Box<dyn Fn(Value) -> BoxFuture<'static, Result<Value, String>> + Send + Sync + 'static>>> = RwLock::new(HashMap::new());
+		Box<dyn Fn(i32, Value) -> BoxFuture<'static, Result<Value, String>> + Send + Sync + 'static>>> = RwLock::new(HashMap::new());
 }
 
-// a server instance for handling registering both request/response methods and listening at none-blocking mode,
-// but only supports one connection at the same time
+// a server instance for handling registering both request/response methods and listening at none-blocking mode
 pub struct Server {
 	client_registry: Vec<String>,
 	socket:          SocketAddr
@@ -53,7 +52,7 @@ impl Server {
 	// register a function instance to respond client request
 	pub fn register<F>(self, name: &str, method: F) -> Self
 		where
-			F: Fn(Value) -> BoxFuture<'static, Result<Value, String>> + Send + Sync + 'static
+			F: Fn(i32, Value) -> BoxFuture<'static, Result<Value, String>> + Send + Sync + 'static
 	{
 		SERVER_REGISTRY.write().unwrap().insert(String::from(name), Box::new(method));
 		self
@@ -98,6 +97,7 @@ impl Server {
 					}
 					CLIENT.write().unwrap().insert(client_id);
 					// start new thread for serverclient handling
+					let this_client_id = client_id;
 					thread::spawn(move || {
 						let mut client = client;
 						let sleep_ms = sleep_ms.clone();
@@ -118,7 +118,7 @@ impl Server {
 											if let Some(function) = SERVER_REGISTRY.read().unwrap().get(&payload.name) {
 												let params = from_str(payload.body.as_str()).unwrap();
 												let (send, receive) = channel();
-												let future = function(params);
+												let future = function(this_client_id, params);
 												thread::spawn(move || {
 													let body;
 													let response = {
@@ -269,8 +269,9 @@ impl ServerClient {
 		self.client_receivers.insert(client_id, client_receivers);
 	}
 
-	pub fn set_id(&mut self, client_id: i32) {
+	pub fn set_id(&mut self, client_id: i32) -> &mut Self {
 		self.client_id = client_id;
+		self
 	}
 }
 

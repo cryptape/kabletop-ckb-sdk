@@ -36,9 +36,11 @@ pub mod ckb {
     use crate::{
         config::types as conf, ckb::transaction::helper
     };
-    use ckb_crypto::secp::Privkey;
+    use ckb_crypto::secp::{
+		Privkey, Generator
+	};
     use ckb_types::{
-        packed::Byte32, H256
+        packed::Byte32, H256, prelude::Pack
     };
 
     pub struct Keypair {
@@ -82,6 +84,32 @@ pub mod ckb {
             privkey: privkey
         }
     }
+
+	impl Default for Vars {
+		fn default() -> Self {
+			let default_key = || Keypair {
+				privkey: Generator::random_privkey(),
+				pubhash: [0u8; 20],
+			};
+			let default_contract = || Contract {
+				tx_hash:   [0u8; 32].pack(),
+				code_hash: [0u8; 32].pack()
+			};
+			Vars {
+				common: Common {
+					ckb_uri:         String::from("http://127.0.0.1:8115"),
+					ckb_indexer_uri: String::from("http://127.0.0.1:8116"),
+					composer_key:    default_key(),
+					user_key:        default_key()
+				},
+				nft:      default_contract(),
+				wallet:   default_contract(),
+				payment:  default_contract(),
+				kabletop: default_contract(),
+				luacodes: vec![]
+			}
+		}
+	}
 
     impl From<conf::Vars> for Vars {
         fn from(conf_vars: conf::Vars) -> Self {
