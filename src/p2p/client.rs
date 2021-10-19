@@ -71,14 +71,11 @@ impl Client {
 		}
 		let (writer, reader) = channel();
 		thread::spawn(move || {
-			fn _send<M: ws::Message>(client: &mut WsClient<TcpStream>, msg: M, callback: &dyn Fn()) -> bool {
+			fn _send<M: ws::Message>(client: &mut WsClient<TcpStream>, msg: M) -> bool {
 				match client.send_message(&msg) {
 					Ok(_) => true,
 					Err(WebSocketError::IoError(err)) => match err.kind() {
-						ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted => {
-							callback();
-							false
-						},
+						ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted => false,
 						_ => panic!("unknown client send error: {:?}", err.kind())
 					},
 					Err(err) => Err(err).expect("client send")
@@ -144,11 +141,13 @@ impl Client {
 				// receiving calling messages from client call
 				if let Ok(message) = reader.try_recv() {
 					if message == String::from("_SHUTDOWN_") {
-						if !_send(&mut client, OwnedMessage::Close(None), &callback) {
+						if !_send(&mut client, OwnedMessage::Close(None)) {
+							callback();
 							break
 						}
 					} else {
-						if !_send(&mut client, Message::text(message), &callback) {
+						if !_send(&mut client, Message::text(message)) {
+							callback();
 							break
 						}
 					}
@@ -160,7 +159,8 @@ impl Client {
 				}
 				// check sending heartbeat message
 				if now.duration_since(last_ping).unwrap() > Duration::from_secs(2) {
-					if !_send(&mut client, OwnedMessage::Ping(vec![]), &callback) {
+					if !_send(&mut client, OwnedMessage::Ping(vec![])) {
+						callback();
 						break
 					}
 					last_ping = now;
@@ -171,7 +171,7 @@ impl Client {
 					.into_iter()
 					.filter(|receive| {
 						if let Ok(response) = receive.try_recv() {
-							ok = _send(&mut client, Message::text(response), &callback);
+							ok = _send(&mut client, Message::text(response));
 							false
 						} else {
 							true
@@ -179,6 +179,7 @@ impl Client {
 					})
 					.collect::<Vec<_>>();
 				if !ok {
+					callback();
 					break
 				}
 				thread::sleep(Duration::from_millis(sleep_ms));
@@ -204,9 +205,9 @@ impl ClientSender {
 	}
 
 	pub fn shutdown(&self) {
-		self.writer
-			.send(String::from("_SHUTDOWN_"))
-			.expect("send shutdown");
+		if let Err(err) = self.writer.send(String::from("_SHUTDOWN_")) {
+			println!("[WARN] shutdown error: {}", err);
+		}
 	}
 }
 

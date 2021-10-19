@@ -191,7 +191,7 @@ impl Server {
 				// receiving message from server controller
 				if let Ok((client_id, message)) = reader.try_recv() {
 					if client_id > 0 {
-						// close specified serverclient
+						// send to specified serverclient
 						if CLIENT.write().unwrap().get(&client_id).is_some() {
 							serverclients
 								.get(&client_id)
@@ -199,10 +199,10 @@ impl Server {
 								.send(message)
 								.unwrap();
 						} else {
-							println!("client id #{} is non-existent", client_id);
+							println!("sending message {} to client {} failed", message, client_id);
 						}
 					} else {
-						// close all serverclients
+						// send to all serverclients
 						for client_id in &*CLIENT.write().unwrap() {
 							serverclients
 								.get(client_id)
