@@ -1,25 +1,19 @@
 use ckb_types::{
-    prelude::*, bytes::Bytes,
-    core::{
+    prelude::*, bytes::Bytes, core::{
         TransactionBuilder, TransactionView, Capacity, ScriptHashType
-    },
-    packed::{
-        CellOutput, CellInput, OutPoint, Script, WitnessArgs
+    }, packed::{
+        CellOutput, CellInput, OutPoint, Script, WitnessArgs, Byte32
     }
 };
 use crate::{
-    config::VARS as _C,
-    ckb::{
+    config::VARS as _C, ckb::{
         transaction::{
             helper, channel::protocol
-        },
-        rpc::{
-            methods as rpc,
-            types::{
+        }, rpc::{
+            methods as rpc, types::{
                 SearchKey, ScriptType
             }
-        },
-        wallet::{
+        }, wallet::{
             signer, keystore
         }
     }
@@ -31,6 +25,8 @@ use molecule::{
     prelude::Entity as MolEntity, bytes::Bytes as MolBytes
 };
 use ckb_crypto::secp::Signature;
+use ckb_hash::new_blake2b;
+use molecule::prelude::Builder as MolBuilder;
 
 /* CONFIG_CELL
 *
@@ -468,7 +464,7 @@ pub async fn build_tx_issue_nft(issue_nfts: Vec<[u8; 20]>, receiver_pkhash: [u8;
 * ]
 */
 pub async fn build_tx_challenge_channel(
-    channel_args: Vec<u8>, channel_hash: [u8; 32], channel_ckb: u64, challenge_data: protocol::Challenge, rounds: &Vec<(protocol::Round, Signature)>
+    channel_args: Vec<u8>, challenger: u8, pending_operations: protocol::Operations, rounds: Vec<(protocol::Round, Signature)>
 ) -> Result<TransactionView> {
     // make sure channel stays open
 	let channel_script = helper::kabletop_script(channel_args);
@@ -478,23 +474,36 @@ pub async fn build_tx_challenge_channel(
         return Err(anyhow!("channel with specified channel_script is non-existent"));
     }
 
+	// building challenge data
+	let mut blake2b = new_blake2b();
+	for (round, signature) in &rounds {
+		blake2b.update(round.as_slice());
+		blake2b.update(signature.serialize().as_slice());
+	}
+	let mut hash_proof = [0u8; 32];
+	blake2b.finalize(&mut hash_proof);
+	let challenge_data = protocol::Challenge::new_builder()
+        .challenger(challenger.into())
+        .snapshot_position((rounds.len() as u8).into())
+		.snapshot_hashproof(Byte32::new(hash_proof).into())
+		.operations(pending_operations)
+        .build();
+
     // prepare input/output and witnesses
     let input = CellInput::new_builder()
         .previous_output(channel_cell[0].out_point.clone())
         .build();
-    let output = {
-		let output = CellOutput::new_builder()
-			.lock(channel_script)
-			.build_exact_capacity(Capacity::bytes(challenge_data.as_slice().len())?)?;
-		let minimal_ckb: u64 = output.capacity().unpack();
-		if minimal_ckb > channel_ckb {
-			return Err(anyhow!("needed ckb for challenged channel cell is greator than the original, consider paying more"));
-		}
-		output
-			.as_builder()
-			.capacity(channel_ckb.pack())
-			.build()
-	};
+	let output = CellOutput::new_builder()
+		.lock(channel_script)
+		.build_exact_capacity(Capacity::bytes(challenge_data.as_slice().len())?)?;
+	let tx_index: u32 = channel_cell[0].tx_index.unpack();
+	let channel_hash: [u8; 32] = channel_cell[0]
+		.block
+		.transactions()
+		.get(tx_index as usize)
+		.expect("get transaction")
+		.calc_tx_hash()
+		.unpack();
     let witnesses = rounds
         .iter()
 		.enumerate()
@@ -566,7 +575,7 @@ pub async fn build_tx_challenge_channel(
 * ]
 */
 pub async fn build_tx_close_channel(
-    channel_args: Vec<u8>, channel_hash: [u8; 32], rounds: Vec<(protocol::Round, Signature)>, winner: u8, from_challenge: bool
+    channel_args: Vec<u8>, rounds: Vec<(protocol::Round, Signature)>, winner: u8, from_challenge: bool
 ) -> Result<TransactionView> {
 	if rounds.is_empty() {
 		return Err(anyhow!("kabletop rounds is empty"));
@@ -584,6 +593,14 @@ pub async fn build_tx_close_channel(
         let block_number = rpc::get_tip_block_number()?;
         input = input.since(block_number.pack());
     }
+	let tx_index: u32 = channel_cell[0].tx_index.unpack();
+	let channel_hash: [u8; 32] = channel_cell[0]
+		.block
+		.transactions()
+		.get(tx_index as usize)
+		.expect("get transaction")
+		.calc_tx_hash()
+		.unpack();
     let witnesses = rounds
         .iter()
 		.enumerate()
@@ -844,7 +861,7 @@ mod test {
 		
 		// prepare tx
 		let tx = block_on(builder::build_tx_close_channel(
-			script.args().as_slice().to_vec(), tx.hash.pack().unpack(), previous_rounds, 1, false)).expect("close channel");
+			script.args().as_slice().to_vec(), previous_rounds, 1, false)).expect("close channel");
 		send_transaction(tx, "close_channel");
 	}
 
@@ -891,19 +908,14 @@ mod test {
 			previous_rounds.push((round, signature.unwrap()));
 		});
 
-		// prepare challenge data
-		let last_round = previous_rounds.last().ok_or_else(|| panic!("empty rounds data")).unwrap();
-		let mut signature = [0u8; 65];
-		signature.copy_from_slice(last_round.1.serialize().as_slice());
-		let challenge = protocol::Challenge::new_builder()
-			.round_offset(((previous_rounds.len() - 1) as u8).into())
-			.signature(signature.into())
-			.round(last_round.0.clone())
-			.build();
-
 		// prepare tx
+		let operations = vec![
+			String::from("print('pending => 用户1的回合：')"),
+			String::from("print('pending => 1.抽牌')")
+		];
 		let tx = block_on(builder::build_tx_challenge_channel(
-			script.args().as_slice().to_vec(), tx.hash.pack().unpack(), ckb, challenge, &previous_rounds)).expect("challenge channel");
+			script.args().as_slice().to_vec(), 1, operations.into(), previous_rounds)
+		).expect("challenge channel");
 		send_transaction(tx, "challenge_channel");
 	}
 }

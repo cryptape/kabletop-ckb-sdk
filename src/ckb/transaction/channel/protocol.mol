@@ -1,9 +1,7 @@
-
 array uint8_t  [byte; 1];
 array uint64_t [byte; 8];
 array blake160 [byte; 20];
 array blake256 [byte; 32];
-array witness  [byte; 65];
 
 vector nfts <blake160>;
 vector bytes <byte>;
@@ -28,7 +26,8 @@ table Args {
 }
 
 table Challenge {
-    round_offset: uint8_t,
-    signature:    witness,
-    round:        Round,
+    challenger:         uint8_t,
+	snapshot_position:  uint8_t,
+	snapshot_hashproof: blake256,
+	operations:         Operations,
 }

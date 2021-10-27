@@ -3,7 +3,7 @@ use molecule::{
 };
 use ckb_types::packed::Byte32;
 use super::protocol::{
-	*, self
+	*, self, Bytes as ProtoBytes
 };
 
 ///////////////////////////////////////////
@@ -76,22 +76,6 @@ impl Into<Blake160> for [u8; 20] {
     }
 }
 
-impl Into<protocol::Witness> for &[u8; 65] {
-	fn into(self) -> protocol::Witness {
-		let mut bytes: [Byte; 65] = [Byte::default(); 65];
-		for i in 0..65 {
-			bytes[i] = Byte::from(self[i]);
-		}
-		protocol::WitnessBuilder::default().set(bytes).build()
-	}
-}
-
-impl Into<protocol::Witness> for [u8; 65] {
-	fn into(self) -> protocol::Witness {
-		(&self).into()
-	}
-}
-
 impl Into<Hashes> for &Vec<Byte32> {
 	fn into(self) -> Hashes {
 		let hash_vec = self
@@ -136,6 +120,24 @@ impl Into<Nfts> for Vec<[u8; 20]> {
     fn into(self) -> Nfts {
         (&self).into()
     }
+}
+
+impl Into<Operations> for &Vec<String> {
+	fn into(self) -> Operations {
+		let operations = self
+			.iter()
+			.map(|bytes| bytes.as_bytes().into())
+			.collect::<Vec<ProtoBytes>>();
+		Operations::new_builder()
+			.set(operations)
+			.build()
+	}
+}
+
+impl Into<Operations> for Vec<String> {
+	fn into(self) -> Operations {
+		(&self).into()
+	}
 }
 
 ///////////////////////////////////////////

@@ -1,14 +1,9 @@
 use crate::{
-    config::VARS as _C,
-    ckb::{
-        rpc::methods as rpc,
-        wallet::{
+    config::VARS as _C, ckb::{
+        rpc::methods as rpc, wallet::{
             keystore, signer
-        },
-        transaction::{
-            genesis::GENESIS as _G, helper, channel::protocol::{
-				*, Bytes as ProtoBytes
-			}
+        }, transaction::{
+            genesis::GENESIS as _G, helper, channel::protocol::*
         }
     }
 };
@@ -16,17 +11,14 @@ use anyhow::{
     Result, anyhow
 };
 use ckb_types::{
-    prelude::*, bytes::Bytes,
-    core::{
+    prelude::*, bytes::Bytes, core::{
         Capacity, TransactionBuilder, TransactionView
-    },
-    packed::{
+    }, packed::{
         CellOutput, OutPoint, Byte32
     }
 };
 use molecule::{
-    bytes::Bytes as MolBytes,
-    prelude::{
+    bytes::Bytes as MolBytes, prelude::{
         Entity as MolEntity, Builder as MolBuilder
     }
 };
@@ -297,15 +289,8 @@ pub fn sign_channel_round(
 
 // make a kabletop round molecule format data
 pub fn make_round(user_type: u8, operations: Vec<String>) -> Round {
-	let operations = operations
-		.iter()
-		.map(|bytes| bytes.as_bytes().into())
-		.collect::<Vec<ProtoBytes>>();
-	let operations = Operations::new_builder()
-		.set(operations)
-		.build();
 	Round::new_builder()
 		.user_type(user_type.into())
-		.operations(operations)
+		.operations(operations.into())
 		.build()
 }
