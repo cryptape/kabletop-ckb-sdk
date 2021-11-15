@@ -22,7 +22,7 @@ use anyhow::{
     Result, anyhow
 };
 use molecule::{
-    prelude::Entity as MolEntity, bytes::Bytes as MolBytes
+    prelude::Entity as MolEntity
 };
 use ckb_crypto::secp::Signature;
 use ckb_hash::new_blake2b;
@@ -467,6 +467,7 @@ pub async fn build_tx_challenge_channel(
     channel_args: Vec<u8>, challenger: u8, pending_operations: protocol::Operations, rounds: Vec<(protocol::Round, Signature)>
 ) -> Result<TransactionView> {
     // make sure channel stays open
+	let kabletop_args = protocol::Args::from_slice(channel_args.as_slice())?;
 	let channel_script = helper::kabletop_script(channel_args);
     let search_key = SearchKey::new(channel_script.clone().into(), ScriptType::Lock);
     let channel_cell = rpc::get_live_cells(search_key, 1, None).await?.objects;
@@ -493,17 +494,44 @@ pub async fn build_tx_challenge_channel(
     let input = CellInput::new_builder()
         .previous_output(channel_cell[0].out_point.clone())
         .build();
-	let output = CellOutput::new_builder()
-		.lock(channel_script)
-		.build_exact_capacity(Capacity::bytes(challenge_data.as_slice().len())?)?;
-	let tx_index: u32 = channel_cell[0].tx_index.unpack();
-	let channel_hash: [u8; 32] = channel_cell[0]
-		.block
-		.transactions()
-		.get(tx_index as usize)
-		.expect("get transaction")
-		.calc_tx_hash()
-		.unpack();
+	let script_hash: [u8; 32] = channel_script.calc_script_hash().unpack();
+	let capacity: u64 = channel_cell[0].output.capacity().unpack();
+	let data_capacity = Capacity::bytes(challenge_data.as_slice().len())?.as_u64();
+	let mut outputs = vec![];
+	outputs.push(
+		CellOutput::new_builder()
+			.lock(channel_script)
+			.capacity((capacity + data_capacity).pack())
+			.build()
+	);
+	let mut outputs_data = vec![Bytes::from(challenge_data.as_slice().to_vec())];
+	// if the kabeltop channel had already been challenged, so pay back the extra ckb to last challenger which
+	// is exactly equal to the SIZE of cell output_data
+	if channel_cell[0].output_data.len() > 0 {
+		let challenge = protocol::Challenge::from_slice(channel_cell[0].output_data.to_vec().as_slice())?;
+		if u8::from(challenge.challenger()) == challenger {
+			return Err(anyhow!("one challenger can't challenge twice"));
+		}
+		let pkhash = {
+			if challenger == 1 {
+				kabletop_args.user2_pkhash()
+			} else {
+				kabletop_args.user1_pkhash()
+			}
+		};
+		let lock_script = Script::new_builder()
+			.code_hash(kabletop_args.lock_code_hash().into())
+			.hash_type(ScriptHashType::Data.into())
+			.args(Bytes::from(<[u8; 20]>::from(pkhash).to_vec()).pack())
+			.build();
+		outputs.push(
+			CellOutput::new_builder()
+				.lock(lock_script)
+				.capacity(Capacity::bytes(channel_cell[0].output_data.len())?.pack())
+				.build()
+		);
+		outputs_data.push(Bytes::new());
+	}
     let witnesses = rounds
         .iter()
 		.enumerate()
@@ -512,21 +540,24 @@ pub async fn build_tx_challenge_channel(
 				.lock(Some(Bytes::from(signature.serialize())).pack())
 				.input_type(Some(Bytes::from(round.as_slice().to_vec())).pack());
 			if i == 0 {
-				witness = witness.output_type(Some(Bytes::from(channel_hash.to_vec())).pack());
+				witness = witness.output_type(Some(Bytes::from(script_hash.to_vec())).pack());
 			}
 			witness.build()
         })
         .collect::<Vec<_>>();
     
     // turn channel to challenge state
-    let tx = TransactionBuilder::default()
+    let mut tx = TransactionBuilder::default()
         .input(input)
-        .output(output)
-        .output_data(Bytes::from(challenge_data.as_slice().to_vec()).pack())
+        .outputs(outputs)
+        .outputs_data(outputs_data.pack())
         .build();
-    let tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
-    let tx = helper::add_code_celldep(tx, OutPoint::new(_C.kabletop.tx_hash.clone(), 0));
-    let tx = signer::sign(tx, &keystore::USER_PRIVKEY, witnesses, Box::new(|_| true));
+    tx = helper::complete_tx_with_sighash_cells(tx, &keystore::USER_PUBHASH, helper::fee("0.1")).await?;
+    tx = helper::add_code_celldep(tx, OutPoint::new(_C.kabletop.tx_hash.clone(), 0));
+	for luacode in &_C.luacodes {
+		tx = helper::add_code_celldep(tx, OutPoint::new(luacode.tx_hash.clone(), 0));
+	}
+    tx = signer::sign(tx, &keystore::USER_PRIVKEY, witnesses, Box::new(|_| true));
 
     Ok(tx)
 }
@@ -581,7 +612,10 @@ pub async fn build_tx_close_channel(
 		return Err(anyhow!("kabletop rounds is empty"));
 	}
     // make sure channel stays open
-    let search_key = SearchKey::new(helper::kabletop_script(channel_args).into(), ScriptType::Lock);
+	let kabletop_args = protocol::Args::from_slice(channel_args.as_slice())?;
+	let kabletop_script = helper::kabletop_script(channel_args);
+	let script_hash: [u8; 32] = kabletop_script.calc_script_hash().unpack();
+    let search_key = SearchKey::new(kabletop_script.into(), ScriptType::Lock);
     let channel_cell = rpc::get_live_cells(search_key, 1, None).await?.objects;
     if channel_cell.is_empty() {
         return Err(anyhow!("channel with specified channel_script is non-existent"));
@@ -593,14 +627,6 @@ pub async fn build_tx_close_channel(
         let block_number = rpc::get_tip_block_number()?;
         input = input.since(block_number.pack());
     }
-	let tx_index: u32 = channel_cell[0].tx_index.unpack();
-	let channel_hash: [u8; 32] = channel_cell[0]
-		.block
-		.transactions()
-		.get(tx_index as usize)
-		.expect("get transaction")
-		.calc_tx_hash()
-		.unpack();
     let witnesses = rounds
         .iter()
 		.enumerate()
@@ -609,18 +635,18 @@ pub async fn build_tx_close_channel(
 				.lock(Some(Bytes::from(signature.serialize())).pack())
 				.input_type(Some(Bytes::from(round.as_slice().to_vec())).pack());
 			if i == 0 {
-				witness = witness.output_type(Some(Bytes::from(channel_hash.to_vec())).pack());
+				witness = witness.output_type(Some(Bytes::from(script_hash.to_vec())).pack());
 			}
 			witness.build()
         })
         .collect::<Vec<_>>();
 
     // prepare outputs
-    let kabletop_args = {
-        let args: Bytes = channel_cell[0].output.lock().args().unpack();
-        protocol::Args::new_unchecked(MolBytes::from(args.to_vec()))
-    };
-    let channel_ckb: u64 = channel_cell[0].output.capacity().unpack();
+	let challenge_ckb = Capacity::bytes(channel_cell[0].output_data.len())?.as_u64();
+    let channel_ckb = {
+		let capacity: u64 = channel_cell[0].output.capacity().unpack();
+		capacity - challenge_ckb
+	};
     let staking_ckb: u64 = kabletop_args.user_staking_ckb().into();
     if channel_ckb <= staking_ckb * 2 {
         return Err(anyhow!("broken channel with wrong cell capacity"));
@@ -629,24 +655,35 @@ pub async fn build_tx_close_channel(
     let mut user1_capacity = staking_ckb;
     let mut user2_capacity = staking_ckb;
     match winner {
-        1 => user1_capacity += bet_ckb,
-        2 => user2_capacity += bet_ckb,
+        1 => user1_capacity += 2 * bet_ckb,
+        2 => user2_capacity += 2 * bet_ckb,
         _ => return Err(anyhow!("winner must be 1 or 2"))
     }
+	if channel_cell[0].output_data.len() > 0 {
+		let challenge = protocol::Challenge::from_slice(channel_cell[0].output_data.to_vec().as_slice())?;
+		match u8::from(challenge.challenger()) {
+			1 => user1_capacity += challenge_ckb,
+			2 => user2_capacity += challenge_ckb,
+			_ => return Err(anyhow!("broken channel with wrong challenge data format"))
+		}
+	}
+	println!("channel_ckb = {}, challenge_ckb = {}, user1_capacity = {}, user2_capacity = {}",
+		channel_ckb, challenge_ckb, user1_capacity, user2_capacity);
     let outputs = 
-    vec![(&kabletop_args.user1_pkhash(), user1_capacity), (&kabletop_args.user2_pkhash(), user2_capacity)]
-        .iter()
-        .map(|&(pkhash, ckb)| {
-            let lock_script = Script::new_builder()
-                .code_hash(kabletop_args.lock_code_hash().into())
-                .hash_type(ScriptHashType::Data.into())
-                .args(Bytes::from(<[u8; 20]>::from(pkhash).to_vec()).pack())
-                .build();
-            CellOutput::new_builder()
-                .lock(lock_script)
-                .build_exact_capacity(Capacity::shannons(ckb))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+		vec![(&kabletop_args.user1_pkhash(), user1_capacity), (&kabletop_args.user2_pkhash(), user2_capacity)]
+			.iter()
+			.map(|&(pkhash, ckb)| {
+				let lock_script = Script::new_builder()
+					.code_hash(kabletop_args.lock_code_hash().into())
+					.hash_type(ScriptHashType::Data.into())
+					.args(Bytes::from(<[u8; 20]>::from(pkhash).to_vec()).pack())
+					.build();
+				CellOutput::new_builder()
+					.lock(lock_script)
+					.capacity(Capacity::shannons(ckb).pack())
+					.build()
+			})
+			.collect::<Vec<_>>();
     
     // close kabletop channel
     let mut tx = TransactionBuilder::default()
@@ -819,7 +856,6 @@ mod test {
 		let channel_tx = std::fs::read("./challenge_channel.json").expect("no open_channel.json file");
 		let tx: JsonTxView = serde_json::from_slice(&channel_tx[..]).expect("json deser tx");
 		let script = helper::kabletop_script(tx.inner.outputs[0].lock.args.as_bytes().to_vec());
-		let ckb: u64 = tx.inner.outputs[0].capacity.into();
 
 		// prepare rounds witness
         let user1_privkey = keystore::USER_PRIVKEY.clone();
@@ -852,8 +888,8 @@ mod test {
 		.for_each(|(user_type, operations)| {
 			let round = round(user_type, operations);
 			let signature = match user_type {
-				1 => interact::sign_channel_round(script.calc_script_hash(), ckb, previous_rounds.clone(), round.clone(), &user2_privkey),
-				2 => interact::sign_channel_round(script.calc_script_hash(), ckb, previous_rounds.clone(), round.clone(), &user1_privkey),
+				1 => interact::sign_channel_round(script.calc_script_hash(), previous_rounds.clone(), round.clone(), &user2_privkey),
+				2 => interact::sign_channel_round(script.calc_script_hash(), previous_rounds.clone(), round.clone(), &user1_privkey),
 				_ => panic!("unknown user type")
 			};
 			previous_rounds.push((round, signature.unwrap()));
@@ -871,7 +907,6 @@ mod test {
 		let channel_tx = std::fs::read("./open_channel.json").expect("no open_channel.json file");
 		let tx: JsonTxView = serde_json::from_slice(&channel_tx[..]).expect("json deser tx");
 		let script = helper::kabletop_script(tx.inner.outputs[0].lock.args.as_bytes().to_vec());
-		let ckb: u64 = tx.inner.outputs[0].capacity.into();
 
 		// prepare rounds witness
         let user1_privkey = keystore::USER_PRIVKEY.clone();
@@ -901,8 +936,8 @@ mod test {
 		.for_each(|(user_type, operations)| {
 			let round = round(user_type, operations);
 			let signature = match user_type {
-				1 => interact::sign_channel_round(script.calc_script_hash(), ckb, previous_rounds.clone(), round.clone(), &user2_privkey),
-				2 => interact::sign_channel_round(script.calc_script_hash(), ckb, previous_rounds.clone(), round.clone(), &user1_privkey),
+				1 => interact::sign_channel_round(script.calc_script_hash(), previous_rounds.clone(), round.clone(), &user2_privkey),
+				2 => interact::sign_channel_round(script.calc_script_hash(), previous_rounds.clone(), round.clone(), &user1_privkey),
 				_ => panic!("unknown user type")
 			};
 			previous_rounds.push((round, signature.unwrap()));

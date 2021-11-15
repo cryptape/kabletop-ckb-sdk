@@ -30,7 +30,6 @@ impl Into<Uint8T> for &u8 {
     }
 }
 
-
 impl Into<Uint8T> for u8 {
     fn into(self) -> Uint8T {
 		(&self).into()
@@ -202,4 +201,13 @@ impl From<Nfts> for Vec<[u8; 20]> {
             .map(|nft| nft.into())
             .collect::<Vec<_>>()
     }
+}
+
+impl From<Operations> for Vec<Vec<u8>> {
+	fn from(operations: Operations) -> Self {
+		operations
+			.into_iter()
+			.map(|operation| operation.raw_data().to_vec())
+			.collect::<Vec<_>>()
+	}
 }

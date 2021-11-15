@@ -223,7 +223,7 @@ pub fn sign_channel_tx(
 
 // check the last one of imported kabeltop [signed_rounds] wether matches its corrensponding signature
 pub fn check_channel_round(
-    script_hash: [u8; 32], capacity: u64, signed_rounds: Vec<(Round, Signature)>, expect_pkhash: [u8; 20]
+    script_hash: [u8; 32], signed_rounds: Vec<(Round, Signature)>, expect_pkhash: [u8; 20]
 ) -> Result<bool> {
     let mut digest = [0u8; 32];
     let mut last_signature: Option<&Signature> = None;
@@ -236,7 +236,6 @@ pub fn check_channel_round(
                 hasher.update(&last_signature.serialize());
             } else {
                 hasher.update(&script_hash);
-                hasher.update(&capacity.to_le_bytes());
             }
             hasher.update(round.as_slice());
             hasher.finalize(&mut digest);
@@ -258,7 +257,7 @@ pub fn check_channel_round(
 
 // sign the new [unsiged_round] using [privkey]
 pub fn sign_channel_round(
-    script_hash: Byte32, capacity: u64, previous_rounds: Vec<(Round, Signature)>, unsiged_round: Round, privkey: &Privkey
+    script_hash: Byte32, previous_rounds: Vec<(Round, Signature)>, unsiged_round: Round, privkey: &Privkey
 ) -> Result<Signature> {
     let rounds_with_lastone_unsigned = {
         let mut rounds = previous_rounds.clone();
@@ -277,7 +276,6 @@ pub fn sign_channel_round(
                 hasher.update(&last_signature.serialize());
             } else {
                 hasher.update(&script_hash.raw_data());
-                hasher.update(&capacity.to_le_bytes());
             }
             hasher.update(round.as_slice());
             hasher.finalize(&mut digest);
