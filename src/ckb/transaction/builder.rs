@@ -483,10 +483,12 @@ pub async fn build_tx_challenge_channel(
 	}
 	let mut hash_proof = [0u8; 32];
 	blake2b.finalize(&mut hash_proof);
+	let last_signature = rounds.last().unwrap().1.clone();
 	let challenge_data = protocol::Challenge::new_builder()
         .challenger(challenger.into())
         .snapshot_position((rounds.len() as u8).into())
 		.snapshot_hashproof(Byte32::new(hash_proof).into())
+		.snapshot_signature(last_signature.into())
 		.operations(pending_operations)
         .build();
 

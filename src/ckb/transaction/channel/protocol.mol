@@ -1,7 +1,8 @@
-array uint8_t  [byte; 1];
-array uint64_t [byte; 8];
-array blake160 [byte; 20];
-array blake256 [byte; 32];
+array uint8_t   [byte; 1];
+array uint64_t  [byte; 8];
+array blake160  [byte; 20];
+array blake256  [byte; 32];
+array signature [byte; 65];
 
 vector nfts <blake160>;
 vector bytes <byte>;
@@ -29,5 +30,6 @@ table Challenge {
     challenger:         uint8_t,
 	snapshot_position:  uint8_t,
 	snapshot_hashproof: blake256,
+	snapshot_signature: signature,
 	operations:         Operations,
 }

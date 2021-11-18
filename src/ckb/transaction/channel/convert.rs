@@ -2,6 +2,8 @@ use molecule::{
     prelude::*, bytes::Bytes
 };
 use ckb_types::packed::Byte32;
+use ckb_crypto::secp::Signature as CkbSignature;
+use std::convert::TryInto;
 use super::protocol::{
 	*, self, Bytes as ProtoBytes
 };
@@ -73,6 +75,33 @@ impl Into<Blake160> for [u8; 20] {
     fn into(self) -> Blake160 {
         (&self).into()
     }
+}
+
+impl Into<Signature> for &[u8; 65] {
+    fn into(self) -> Signature {
+        let bytes = Bytes::from(self.to_vec());
+        Signature::new_unchecked(bytes)
+    }
+}
+
+impl Into<Signature> for [u8; 65] {
+    fn into(self) -> Signature {
+        (&self).into()
+    }
+}
+
+impl Into<Signature> for &CkbSignature {
+	fn into(self) -> Signature {
+		let signature: [u8; 65] = self.serialize().try_into().unwrap();
+		signature.into()
+	}
+}
+
+impl Into<Signature> for CkbSignature {
+	fn into(self) -> Signature {
+		let signature: [u8; 65] = self.serialize().try_into().unwrap();
+		signature.into()
+	}
 }
 
 impl Into<Hashes> for &Vec<Byte32> {
@@ -169,6 +198,12 @@ impl From<&Blake160> for [u8; 20] {
         bytes.copy_from_slice(blake160.raw_data().to_vec().as_slice());
         bytes
     }
+}
+
+impl From<Signature> for CkbSignature {
+	fn from(signature: Signature) -> Self {
+		CkbSignature::from_slice(signature.as_slice()).unwrap()
+	}
 }
 
 impl From<Blake256> for Byte32 {
