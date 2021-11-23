@@ -475,38 +475,10 @@ pub async fn build_tx_challenge_channel(
         return Err(anyhow!("channel with specified channel_script is non-existent"));
     }
 
-	// building challenge data
-	let mut blake2b = new_blake2b();
-	for (round, signature) in &rounds {
-		blake2b.update(round.as_slice());
-		blake2b.update(signature.serialize().as_slice());
-	}
-	let mut hash_proof = [0u8; 32];
-	blake2b.finalize(&mut hash_proof);
-	let last_signature = rounds.last().unwrap().1.clone();
-	let challenge_data = protocol::Challenge::new_builder()
-        .challenger(challenger.into())
-        .snapshot_position((rounds.len() as u8).into())
-		.snapshot_hashproof(Byte32::new(hash_proof).into())
-		.snapshot_signature(last_signature.into())
-		.operations(pending_operations)
-        .build();
-
-    // prepare input/output and witnesses
-    let input = CellInput::new_builder()
-        .previous_output(channel_cell[0].out_point.clone())
-        .build();
-	let script_hash: [u8; 32] = channel_script.calc_script_hash().unpack();
-	let capacity: u64 = channel_cell[0].output.capacity().unpack();
-	let data_capacity = Capacity::bytes(challenge_data.as_slice().len())?.as_u64();
 	let mut outputs = vec![];
-	outputs.push(
-		CellOutput::new_builder()
-			.lock(channel_script)
-			.capacity((capacity + data_capacity).pack())
-			.build()
-	);
-	let mut outputs_data = vec![Bytes::from(challenge_data.as_slice().to_vec())];
+	let mut outputs_data = vec![];
+    let mut challenge_count = 1u8;
+    
 	// if the kabeltop channel had already been challenged, so pay back the extra ckb to last challenger which
 	// is exactly equal to the SIZE of cell output_data
 	if channel_cell[0].output_data.len() > 0 {
@@ -533,7 +505,43 @@ pub async fn build_tx_challenge_channel(
 				.build()
 		);
 		outputs_data.push(Bytes::new());
+        challenge_count = u8::from(challenge.count()) + 1;
 	}
+
+	// building challenge data
+	let mut blake2b = new_blake2b();
+	for (round, signature) in &rounds {
+		blake2b.update(round.as_slice());
+		blake2b.update(signature.serialize().as_slice());
+	}
+	let mut hash_proof = [0u8; 32];
+	blake2b.finalize(&mut hash_proof);
+	let last_signature = rounds.last().unwrap().1.clone();
+	let challenge_data = protocol::Challenge::new_builder()
+        .count(challenge_count.into())
+        .challenger(challenger.into())
+        .snapshot_position((rounds.len() as u8).into())
+		.snapshot_hashproof(Byte32::new(hash_proof).into())
+		.snapshot_signature(last_signature.into())
+		.operations(pending_operations)
+        .build();
+
+    // prepare input/output and witnesses
+    let input = CellInput::new_builder()
+        .previous_output(channel_cell[0].out_point.clone())
+        .build();
+	let script_hash: [u8; 32] = channel_script.calc_script_hash().unpack();
+	let capacity: u64 = channel_cell[0].output.capacity().unpack();
+	let data_capacity = Capacity::bytes(challenge_data.as_slice().len())?.as_u64();
+	outputs.push(
+		CellOutput::new_builder()
+			.lock(channel_script)
+			.capacity((capacity + data_capacity).pack())
+			.build()
+	);
+	outputs_data.push(Bytes::from(challenge_data.as_slice().to_vec()));
+
+    // prepare witnesses from kabletop rounds
     let witnesses = rounds
         .iter()
 		.enumerate()
