@@ -27,6 +27,7 @@ table Args {
 }
 
 table Challenge {
+	count:              uint8_t,
     challenger:         uint8_t,
 	snapshot_position:  uint8_t,
 	snapshot_hashproof: blake256,

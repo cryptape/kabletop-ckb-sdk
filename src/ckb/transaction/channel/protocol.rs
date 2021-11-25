@@ -4246,7 +4246,8 @@ impl ::core::fmt::Debug for Challenge {
 impl ::core::fmt::Display for Challenge {
     fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
         write!(f, "{} {{ ", Self::NAME)?;
-        write!(f, "{}: {}", "challenger", self.challenger())?;
+        write!(f, "{}: {}", "count", self.count())?;
+        write!(f, ", {}: {}", "challenger", self.challenger())?;
         write!(f, ", {}: {}", "snapshot_position", self.snapshot_position())?;
         write!(
             f,
@@ -4271,17 +4272,17 @@ impl ::core::fmt::Display for Challenge {
 impl ::core::default::Default for Challenge {
     fn default() -> Self {
         let v: Vec<u8> = vec![
-            127, 0, 0, 0, 24, 0, 0, 0, 25, 0, 0, 0, 26, 0, 0, 0, 58, 0, 0, 0, 123, 0, 0, 0, 0, 0,
+            132, 0, 0, 0, 28, 0, 0, 0, 29, 0, 0, 0, 30, 0, 0, 0, 31, 0, 0, 0, 63, 0, 0, 0, 128, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0,
         ];
         Challenge::new_unchecked(v.into())
     }
 }
 impl Challenge {
-    pub const FIELD_COUNT: usize = 5;
+    pub const FIELD_COUNT: usize = 6;
     pub fn total_size(&self) -> usize {
         molecule::unpack_number(self.as_slice()) as usize
     }
@@ -4298,35 +4299,41 @@ impl Challenge {
     pub fn has_extra_fields(&self) -> bool {
         Self::FIELD_COUNT != self.field_count()
     }
-    pub fn challenger(&self) -> Uint8T {
+    pub fn count(&self) -> Uint8T {
         let slice = self.as_slice();
         let start = molecule::unpack_number(&slice[4..]) as usize;
         let end = molecule::unpack_number(&slice[8..]) as usize;
         Uint8T::new_unchecked(self.0.slice(start..end))
     }
-    pub fn snapshot_position(&self) -> Uint8T {
+    pub fn challenger(&self) -> Uint8T {
         let slice = self.as_slice();
         let start = molecule::unpack_number(&slice[8..]) as usize;
         let end = molecule::unpack_number(&slice[12..]) as usize;
         Uint8T::new_unchecked(self.0.slice(start..end))
     }
-    pub fn snapshot_hashproof(&self) -> Blake256 {
+    pub fn snapshot_position(&self) -> Uint8T {
         let slice = self.as_slice();
         let start = molecule::unpack_number(&slice[12..]) as usize;
         let end = molecule::unpack_number(&slice[16..]) as usize;
+        Uint8T::new_unchecked(self.0.slice(start..end))
+    }
+    pub fn snapshot_hashproof(&self) -> Blake256 {
+        let slice = self.as_slice();
+        let start = molecule::unpack_number(&slice[16..]) as usize;
+        let end = molecule::unpack_number(&slice[20..]) as usize;
         Blake256::new_unchecked(self.0.slice(start..end))
     }
     pub fn snapshot_signature(&self) -> Signature {
         let slice = self.as_slice();
-        let start = molecule::unpack_number(&slice[16..]) as usize;
-        let end = molecule::unpack_number(&slice[20..]) as usize;
+        let start = molecule::unpack_number(&slice[20..]) as usize;
+        let end = molecule::unpack_number(&slice[24..]) as usize;
         Signature::new_unchecked(self.0.slice(start..end))
     }
     pub fn operations(&self) -> Operations {
         let slice = self.as_slice();
-        let start = molecule::unpack_number(&slice[20..]) as usize;
+        let start = molecule::unpack_number(&slice[24..]) as usize;
         if self.has_extra_fields() {
-            let end = molecule::unpack_number(&slice[24..]) as usize;
+            let end = molecule::unpack_number(&slice[28..]) as usize;
             Operations::new_unchecked(self.0.slice(start..end))
         } else {
             Operations::new_unchecked(self.0.slice(start..))
@@ -4359,6 +4366,7 @@ impl molecule::prelude::Entity for Challenge {
     }
     fn as_builder(self) -> Self::Builder {
         Self::new_builder()
+            .count(self.count())
             .challenger(self.challenger())
             .snapshot_position(self.snapshot_position())
             .snapshot_hashproof(self.snapshot_hashproof())
@@ -4385,7 +4393,8 @@ impl<'r> ::core::fmt::Debug for ChallengeReader<'r> {
 impl<'r> ::core::fmt::Display for ChallengeReader<'r> {
     fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
         write!(f, "{} {{ ", Self::NAME)?;
-        write!(f, "{}: {}", "challenger", self.challenger())?;
+        write!(f, "{}: {}", "count", self.count())?;
+        write!(f, ", {}: {}", "challenger", self.challenger())?;
         write!(f, ", {}: {}", "snapshot_position", self.snapshot_position())?;
         write!(
             f,
@@ -4408,7 +4417,7 @@ impl<'r> ::core::fmt::Display for ChallengeReader<'r> {
     }
 }
 impl<'r> ChallengeReader<'r> {
-    pub const FIELD_COUNT: usize = 5;
+    pub const FIELD_COUNT: usize = 6;
     pub fn total_size(&self) -> usize {
         molecule::unpack_number(self.as_slice()) as usize
     }
@@ -4425,35 +4434,41 @@ impl<'r> ChallengeReader<'r> {
     pub fn has_extra_fields(&self) -> bool {
         Self::FIELD_COUNT != self.field_count()
     }
-    pub fn challenger(&self) -> Uint8TReader<'r> {
+    pub fn count(&self) -> Uint8TReader<'r> {
         let slice = self.as_slice();
         let start = molecule::unpack_number(&slice[4..]) as usize;
         let end = molecule::unpack_number(&slice[8..]) as usize;
         Uint8TReader::new_unchecked(&self.as_slice()[start..end])
     }
-    pub fn snapshot_position(&self) -> Uint8TReader<'r> {
+    pub fn challenger(&self) -> Uint8TReader<'r> {
         let slice = self.as_slice();
         let start = molecule::unpack_number(&slice[8..]) as usize;
         let end = molecule::unpack_number(&slice[12..]) as usize;
         Uint8TReader::new_unchecked(&self.as_slice()[start..end])
     }
-    pub fn snapshot_hashproof(&self) -> Blake256Reader<'r> {
+    pub fn snapshot_position(&self) -> Uint8TReader<'r> {
         let slice = self.as_slice();
         let start = molecule::unpack_number(&slice[12..]) as usize;
         let end = molecule::unpack_number(&slice[16..]) as usize;
+        Uint8TReader::new_unchecked(&self.as_slice()[start..end])
+    }
+    pub fn snapshot_hashproof(&self) -> Blake256Reader<'r> {
+        let slice = self.as_slice();
+        let start = molecule::unpack_number(&slice[16..]) as usize;
+        let end = molecule::unpack_number(&slice[20..]) as usize;
         Blake256Reader::new_unchecked(&self.as_slice()[start..end])
     }
     pub fn snapshot_signature(&self) -> SignatureReader<'r> {
         let slice = self.as_slice();
-        let start = molecule::unpack_number(&slice[16..]) as usize;
-        let end = molecule::unpack_number(&slice[20..]) as usize;
+        let start = molecule::unpack_number(&slice[20..]) as usize;
+        let end = molecule::unpack_number(&slice[24..]) as usize;
         SignatureReader::new_unchecked(&self.as_slice()[start..end])
     }
     pub fn operations(&self) -> OperationsReader<'r> {
         let slice = self.as_slice();
-        let start = molecule::unpack_number(&slice[20..]) as usize;
+        let start = molecule::unpack_number(&slice[24..]) as usize;
         if self.has_extra_fields() {
-            let end = molecule::unpack_number(&slice[24..]) as usize;
+            let end = molecule::unpack_number(&slice[28..]) as usize;
             OperationsReader::new_unchecked(&self.as_slice()[start..end])
         } else {
             OperationsReader::new_unchecked(&self.as_slice()[start..])
@@ -4511,14 +4526,16 @@ impl<'r> molecule::prelude::Reader<'r> for ChallengeReader<'r> {
         }
         Uint8TReader::verify(&slice[offsets[0]..offsets[1]], compatible)?;
         Uint8TReader::verify(&slice[offsets[1]..offsets[2]], compatible)?;
-        Blake256Reader::verify(&slice[offsets[2]..offsets[3]], compatible)?;
-        SignatureReader::verify(&slice[offsets[3]..offsets[4]], compatible)?;
-        OperationsReader::verify(&slice[offsets[4]..offsets[5]], compatible)?;
+        Uint8TReader::verify(&slice[offsets[2]..offsets[3]], compatible)?;
+        Blake256Reader::verify(&slice[offsets[3]..offsets[4]], compatible)?;
+        SignatureReader::verify(&slice[offsets[4]..offsets[5]], compatible)?;
+        OperationsReader::verify(&slice[offsets[5]..offsets[6]], compatible)?;
         Ok(())
     }
 }
 #[derive(Debug, Default)]
 pub struct ChallengeBuilder {
+    pub(crate) count: Uint8T,
     pub(crate) challenger: Uint8T,
     pub(crate) snapshot_position: Uint8T,
     pub(crate) snapshot_hashproof: Blake256,
@@ -4526,7 +4543,11 @@ pub struct ChallengeBuilder {
     pub(crate) operations: Operations,
 }
 impl ChallengeBuilder {
-    pub const FIELD_COUNT: usize = 5;
+    pub const FIELD_COUNT: usize = 6;
+    pub fn count(mut self, v: Uint8T) -> Self {
+        self.count = v;
+        self
+    }
     pub fn challenger(mut self, v: Uint8T) -> Self {
         self.challenger = v;
         self
@@ -4553,6 +4574,7 @@ impl molecule::prelude::Builder for ChallengeBuilder {
     const NAME: &'static str = "ChallengeBuilder";
     fn expected_length(&self) -> usize {
         molecule::NUMBER_SIZE * (Self::FIELD_COUNT + 1)
+            + self.count.as_slice().len()
             + self.challenger.as_slice().len()
             + self.snapshot_position.as_slice().len()
             + self.snapshot_hashproof.as_slice().len()
@@ -4562,6 +4584,8 @@ impl molecule::prelude::Builder for ChallengeBuilder {
     fn write<W: ::molecule::io::Write>(&self, writer: &mut W) -> ::molecule::io::Result<()> {
         let mut total_size = molecule::NUMBER_SIZE * (Self::FIELD_COUNT + 1);
         let mut offsets = Vec::with_capacity(Self::FIELD_COUNT);
+        offsets.push(total_size);
+        total_size += self.count.as_slice().len();
         offsets.push(total_size);
         total_size += self.challenger.as_slice().len();
         offsets.push(total_size);
@@ -4576,6 +4600,7 @@ impl molecule::prelude::Builder for ChallengeBuilder {
         for offset in offsets.into_iter() {
             writer.write_all(&molecule::pack_number(offset as molecule::Number))?;
         }
+        writer.write_all(self.count.as_slice())?;
         writer.write_all(self.challenger.as_slice())?;
         writer.write_all(self.snapshot_position.as_slice())?;
         writer.write_all(self.snapshot_hashproof.as_slice())?;

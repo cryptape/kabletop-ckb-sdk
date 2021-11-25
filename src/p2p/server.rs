@@ -1,8 +1,12 @@
 use websocket::{
-	Message, sync::Server as WsServer, message::OwnedMessage, result::WebSocketError
+	Message, message::OwnedMessage, ws, result::WebSocketError, sync::{
+		Server as WsServer, Client as WsClient
+	}
 };
 use std::{
-	thread, net::SocketAddr, collections::{
+	thread, net::{
+		SocketAddr, TcpStream
+	}, collections::{
 		HashMap, HashSet
 	}, time::{
 		Duration, SystemTime
@@ -76,6 +80,14 @@ impl Server {
 			let mut client_id = 0;
 			let mut serverclients: HashMap<i32, Sender<String>> = HashMap::new();
 			let mut skip = false;
+			fn client_send<M: ws::Message>(client: &mut WsClient<TcpStream>, msg: M) -> bool {
+				if let Err(err) = client.send_message(&msg) {
+					println!("send message error: {}", err.to_string());
+					false
+				} else {
+					true
+				}
+			}
 			loop {
 				// listening client connection
 				if let Ok(connect) = server.accept() {
@@ -149,8 +161,10 @@ impl Server {
 								},
 								Ok(OwnedMessage::Close(_)) => break,
 								Ok(OwnedMessage::Ping(_)) => {
-									client.send_message(&OwnedMessage::Pong(vec![])).expect("server pong");
 									last_ping = now;
+									if !client_send(&mut client, OwnedMessage::Pong(vec![])) {
+										break
+									}
 								},
 								Err(WebSocketError::NoDataAvailable) => {},
 								Err(WebSocketError::IoError(_)) => {},
@@ -160,10 +174,12 @@ impl Server {
 							// fetching message from server client
 							if let Ok(message) = client_reader.try_recv() {
 								if message == String::from("_SHUTDOWN_") {
-									client.send_message(&OwnedMessage::Close(None)).expect("server client shutdown");
+									client_send(&mut client, OwnedMessage::Close(None));
 									break
 								}
-								client.send_message(&Message::text(message)).expect("send server request to client")
+								if !client_send(&mut client, Message::text(message)) {
+									break
+								}
 							}
 							// check connection alive status
 							if now.duration_since(last_ping).unwrap() > Duration::from_secs(8) {
@@ -174,7 +190,7 @@ impl Server {
 								.into_iter()
 								.filter(|receive| {
 									if let Ok(response) = receive.try_recv() {
-										client.send_message(&Message::text(response)).expect("send server response to client");
+										client_send(&mut client, Message::text(response));
 										false
 									} else {
 										true
