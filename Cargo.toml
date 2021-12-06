@@ -7,11 +7,11 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ckb-sdk = "0.40.0"
-ckb-types = "0.40.0"
-ckb-hash = "0.39.1"
-ckb-crypto = "0.40.0"
-ckb-jsonrpc-types = "0.40.0"
+ckb-sdk = "0.101.1"
+ckb-types = "0.101.0"
+ckb-hash = "0.101.0"
+ckb-crypto = "0.101.0"
+ckb-jsonrpc-types = "0.101.0"
 async-jsonrpc-client = { version = "0.3.0", default-features = false, features = ["http-async-std"] }
 websocket = "0.26.2"
 futures = "0.3.15"

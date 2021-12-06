@@ -719,10 +719,10 @@ pub async fn build_tx_close_channel(
 mod test {
     use ckb_sdk::rpc::HttpRpcClient;
     use futures::executor::block_on;
-    use ckb_types::{
-		core::TransactionView, prelude::*
+    use ckb_types::core::TransactionView;
+    use ckb_jsonrpc_types::{
+		TransactionView as JsonTxView, OutputsValidator
 	};
-    use ckb_jsonrpc_types::TransactionView as JsonTxView;
     use ckb_crypto::secp::Privkey;
     use crate::{
         config::VARS as _C,
@@ -749,7 +749,7 @@ mod test {
     fn send_transaction(tx: TransactionView, name: &str) {
         let mut ckb_rpc = HttpRpcClient::new(String::from(_C.common.ckb_uri.clone()));
         write_tx_to_file(tx.clone(), format!("{}.json", name));
-        match ckb_rpc.send_transaction(tx.data()) {
+        match ckb_rpc.send_transaction(tx.data(), Some(OutputsValidator::Passthrough)) {
             Ok(tx_hash) => println!("success: {:?}", hex::encode(tx_hash.as_bytes())),
             Err(err)    => panic!("failure: {:?}", err)
         }

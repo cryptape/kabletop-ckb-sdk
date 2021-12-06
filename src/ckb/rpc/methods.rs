@@ -18,7 +18,7 @@ use crate::{
     }
 };
 use ckb_jsonrpc_types::{
-    JsonBytes, Status, Uint32
+    JsonBytes, Status, Uint32, OutputsValidator
 };
 use std::{
 	sync::Mutex, collections::HashMap
@@ -77,7 +77,11 @@ pub fn get_transaction(tx_hash: Byte32) -> Result<Transaction> {
         });
     let tx = tx.ok_or(anyhow!(error))?;
     if tx.tx_status.status == Status::Committed {
-        Ok(tx.transaction.inner.into())
+		if let Some(transaction) = tx.transaction {
+			Ok(transaction.inner.into())
+		} else {
+			Err(anyhow!("empty transaction"))
+		}
     } else {
         Err(anyhow!("not committed"))
     }
@@ -87,7 +91,7 @@ pub fn send_transaction(tx: Transaction) -> Result<H256> {
     let result = CKB_CLIENT
         .lock()
         .unwrap()
-		.send_transaction(tx);
+		.send_transaction(tx, Some(OutputsValidator::Passthrough));
 	match result {
 		Ok(hash) => Ok(hash),
 		Err(err) => Err(anyhow!(err))
