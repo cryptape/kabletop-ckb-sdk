@@ -1,5 +1,6 @@
+use ckb_types::H256;
 use ckb_jsonrpc_types::{
-    Uint32, Uint64, Script, BlockNumber, JsonBytes, CellOutput, OutPoint
+    Uint32, Uint64, Script, BlockNumber, JsonBytes, CellOutput, OutPoint, Capacity
 };
 use serde::{
     Deserialize, Serialize
@@ -53,6 +54,13 @@ pub struct Cell {
     pub tx_index:     Uint32,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct CellsCapacity {
+    capacity:     Capacity,
+    block_hash:   H256,
+    block_number: BlockNumber,
+}
+
 impl SearchKey {
     pub fn new(script: Script, script_type: ScriptType) -> SearchKey {
         SearchKey {
@@ -76,22 +84,26 @@ impl SearchKey {
 // ckb types format for a better use that turned from previous json types
 pub mod ckb {
     use ckb_types::{
-        prelude::*, bytes::Bytes,
+        prelude::*, bytes::Bytes, core::Capacity, H256,
         packed::{
-            CellOutput, OutPoint, Uint32, Block
+            CellOutput, OutPoint
         }
     };
     use std::convert::From;
-    use crate::ckb::{
-        rpc::types as json, rpc::methods as rpc
-    };
+    use crate::ckb::rpc::types as json;
+	
+	pub struct CellsCapacity {
+		pub capacity:     Capacity,
+		pub block_hash:   H256,
+		pub block_number: u64,
+	}
 
     pub struct Cell {
-        pub output:      CellOutput,
-        pub output_data: Bytes,
-        pub out_point:   OutPoint,
-        pub block:       Block,
-        pub tx_index:    Uint32,
+        pub output:       CellOutput,
+        pub output_data:  Bytes,
+        pub out_point:    OutPoint,
+        pub block_number: u64,
+        pub tx_index:     u32,
     }
 
     impl From<json::Cell> for Cell {
@@ -104,18 +116,23 @@ pub mod ckb {
                 let out_point: OutPoint = json_cell.out_point.into();
                 OutPoint::new_unchecked(out_point.as_bytes())
             };
-            let block = {
-                let block_number: u64 = json_cell.block_number.into();
-                rpc::get_block(block_number).unwrap()
-            };
-            let tx_index = {
-                let tx_index: u32 = json_cell.tx_index.into();
-                tx_index.pack()
-            };
+            let block_number = u64::from(json_cell.block_number);
+            let tx_index = u32::from(json_cell.tx_index);
             let output_data = json_cell.output_data.into_bytes();
             Cell {
-                output, out_point, block, tx_index, output_data,
+                output, out_point, block_number, tx_index, output_data,
             }
         }
     }
+
+	impl From<json::CellsCapacity> for CellsCapacity {
+		fn from(json_capacity: json::CellsCapacity) -> Self {
+			let capacity: Capacity = json_capacity.capacity.into();
+            let block_number = u64::from(json_capacity.block_number);
+			let block_hash = json_capacity.block_hash;
+			CellsCapacity {
+				capacity, block_number, block_hash
+			}
+		}
+	}
 }

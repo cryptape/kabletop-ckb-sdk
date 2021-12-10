@@ -303,7 +303,7 @@ pub async fn build_tx_reveal_nft_package() -> Result<TransactionView> {
 
     // prepare output data
     let nft_config = helper::NFTConfig::from(config_cell[0].output_data.clone());
-    let block = wallet_cell[0].block.clone().into_view();
+    let block = rpc::get_block(wallet_cell[0].block_number)?.into_view();
     let package_count = wallet_cell[0].output_data[0];
     let output_wallet_data = vec![0];
     let output_nft_data = nft_config.rip_package(block.header().hash(), package_count);

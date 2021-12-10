@@ -13,9 +13,11 @@ use anyhow::{
     Result, anyhow
 };
 use crate::{
-    config::VARS as _C, ckb::rpc::types::{
-        Pagination, Cell, SearchKey, Order, ckb, ScriptType
-    }
+    config::VARS as _C, ckb::{
+		transaction::helper::sighash_script, rpc::types::{
+			Pagination, Cell, SearchKey, Order, ckb, ScriptType, CellsCapacity
+		}
+	}
 };
 use ckb_jsonrpc_types::{
     JsonBytes, Status, Uint32, OutputsValidator
@@ -128,10 +130,25 @@ pub async fn get_live_cells(search_key: SearchKey, limit: u32, cursor: Option<Js
                 objects:     cells,
                 last_cursor: pagination.last_cursor
             };
-            return Ok(pagination);
+            Ok(pagination)
         },
-        Output::Failure(err) => return Err(anyhow!(err))
+        Output::Failure(err) => Err(anyhow!(err))
     }
+}
+
+pub async fn get_total_capacity(lock_args: Vec<u8>) -> Result<ckb::CellsCapacity> {
+	let lock_script = sighash_script(lock_args.as_slice());
+	let search_key = SearchKey::new(lock_script.into(), ScriptType::Lock);
+    let output = INDEXER_CLIENT.request("get_cells_capacity", Some(Params::Array(vec![
+        json!(search_key)
+    ]))).await?;
+	match output {
+		Output::Success(value) => {
+			let capacity: CellsCapacity = from_value(value.result)?;
+			Ok(capacity.into())
+		},
+		Output::Failure(err) => Err(anyhow!(err))
+	}
 }
 
 pub async fn get_live_nfts(lock_script: Script, type_script: Option<Script>, cellstep: u32) -> Result<HashMap<[u8; 20], u32>> {
