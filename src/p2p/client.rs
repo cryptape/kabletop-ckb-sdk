@@ -1,5 +1,5 @@
-use websocket::{
-	ClientBuilder, Message, message::OwnedMessage, result::WebSocketError, ws, sync::Client as WsClient
+use tokio_tungstenite::{
+	connect_async, WebSocketStream, MaybeTlsStream, tungstenite::Message
 };
 use serde_json::{
     from_value, json, Value, to_string, from_str
@@ -10,19 +10,72 @@ use serde::{
 use anyhow::{
     Result, anyhow
 };
+use tokio::net::TcpStream;
 use std::{
-	collections::HashMap, thread, net::TcpStream, io::ErrorKind, time::{
+	collections::HashMap, time::{
 		Duration, SystemTime
-	}, sync::mpsc::{
-		channel, Receiver, Sender
+	}, sync::{
+		RwLock, mpsc::{
+			channel, Receiver, Sender
+		}
 	}
 };
 use super::{
 	Wrapper, Payload, Error, Caller
 };
 use futures::{
-	future::BoxFuture, executor::block_on
+	future::BoxFuture, stream::SplitSink, executor::block_on
 };
+use futures_util::{
+	SinkExt, StreamExt
+};
+
+lazy_static! {
+	static ref HEARTBEAT: RwLock<(SystemTime, SystemTime)> = RwLock::new((SystemTime::now(), SystemTime::now()));
+	static ref SERVER: RwLock<Option<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>> = RwLock::new(None);
+	static ref CALLBACK: RwLock<Option<Box<dyn Fn() + Send + Sync + 'static>>> = RwLock::new(None);
+}
+
+fn callback() {
+	if let Some(cb) = &*CALLBACK.read().unwrap() {
+		cb();
+	}
+}
+
+fn close_server()
+{
+	if SERVER.write().unwrap().is_some() {
+		callback();
+	}
+	*SERVER.write().unwrap() = None;
+}
+
+fn server_send(msg: Message) {
+	let mut ok = true;
+	if let Some(server) = &mut *SERVER.write().unwrap() {
+		if let Message::Close(_) = msg {
+			ok = false;
+		}
+		if let Err(err) = block_on(server.send(msg)) {
+			println!("clien send error => {}", err);
+			ok = false;
+		}
+	}
+	if !ok {
+		close_server();
+	}
+}
+
+fn update_heartbeat(ping: Option<SystemTime>, pong: Option<SystemTime>) {
+	let (mut last_ping, last_pong) = *HEARTBEAT.write().unwrap();
+	if ping.is_some() {
+		last_ping = ping.unwrap();
+		*HEARTBEAT.write().unwrap() = (ping.unwrap(), last_pong);
+	}
+	if pong.is_some() {
+		*HEARTBEAT.write().unwrap() = (last_ping, pong.unwrap());
+	}
+}
 
 // a client instance connecting to server
 pub struct Client {
@@ -56,12 +109,14 @@ impl Client {
 	}
 
 	// connect to server and listen request from server
-	pub fn connect<F>(self, sleep_ms: u64, callback: F) -> Result<ClientSender> 
+	pub async fn connect<F>(self, sleep_ms: u64, local_callback: F) -> Result<ClientSender> 
 		where
-			F: Fn() + Send + 'static
+			F: Fn() + Send + Sync + 'static
 	{
-		let mut client = ClientBuilder::new(self.socket.as_str())?.connect_insecure()?;
-		client.set_nonblocking(true)?;
+		let (client, _) = connect_async(self.socket.as_str()).await?;
+		let (sink, mut stream) = client.split();
+		*SERVER.write().unwrap() = Some(sink);
+		*CALLBACK.write().unwrap() = Some(Box::new(local_callback));
 		let mut server_sender = HashMap::new();
 		let mut server_receiver = HashMap::new();
 		for name in &self.server_registry {
@@ -70,25 +125,43 @@ impl Client {
 			server_receiver.insert(name.clone(), sr);
 		}
 		let (writer, reader) = channel();
-		thread::spawn(move || {
-			fn _send<M: ws::Message>(client: &mut WsClient<TcpStream>, msg: M) -> bool {
-				match client.send_message(&msg) {
-					Ok(_) => true,
-					Err(WebSocketError::IoError(err)) => match err.kind() {
-						ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted => false,
-						_ => panic!("unknown client send error: {:?}", err.kind())
-					},
-					Err(err) => Err(err).expect("client send")
+		// start client write thread
+		tokio::spawn(async move {
+			let mut sleep = tokio::time::interval(Duration::from_millis(sleep_ms));
+			while SERVER.read().unwrap().is_some() {
+				let (last_ping, last_pong) = *HEARTBEAT.read().unwrap();
+				// receiving calling messages from client call
+				if let Ok(message) = reader.try_recv() {
+					if message == String::from("_SHUTDOWN_") {
+						server_send(Message::Close(None));
+					} else {
+						server_send(Message::text(message));
+					}
 				}
+				// check connection alive status
+				if SystemTime::now().duration_since(last_pong).unwrap() > Duration::from_secs(8) {
+					close_server();
+				}
+				// check sending heartbeat message
+				if SystemTime::now().duration_since(last_ping).unwrap() > Duration::from_secs(2) {
+					server_send(Message::Ping(vec![]));
+					update_heartbeat(Some(SystemTime::now()), None);
+				}
+				sleep.tick().await;
 			}
-			let mut last_pong = SystemTime::now();
-			let mut last_ping = SystemTime::now();
-			let mut future_responses = vec![];
-			loop {
-				let now = SystemTime::now();
+			println!("p2p client thread CLOSED");
+		});
+		// start client read thread
+		tokio::spawn(async move {
+			let mut sleep = tokio::time::interval(Duration::from_millis(sleep_ms));
+			while SERVER.read().unwrap().is_some() {
 				// receiving response and calling messages from server, client's recv_messsage method will be blocked
-				match client.recv_message() {
-					Ok(OwnedMessage::Text(value)) => {
+				let next = stream.next().await;
+				if let None = next {
+					continue
+				}
+				match next.unwrap() {
+					Ok(Message::Text(value)) => {
 						let message: Wrapper = {
 							let value = from_str(value.as_str()).expect("parse server message");
 							from_value(value).unwrap()
@@ -98,12 +171,11 @@ impl Client {
 								// check wether message is in the client registry table
 								if let Some(function) = self.client_registry.get(&payload.name) {
 									let params = from_str(payload.body.as_str()).unwrap();
-									let (send, receive) = channel();
 									let future = function(0, params);
-									thread::spawn(move || {
+									tokio::spawn(async move {
 										let body;
 										let response = {
-											match block_on(async move { future.await }) {
+											match future.await {
 												Ok(result)  => body = to_string(&result).unwrap(),
 												Err(reason) => body = to_string(&json!(Error { reason })).unwrap()
 											}
@@ -111,9 +183,8 @@ impl Client {
 												&Wrapper::Reply(Payload { name: payload.name, body })
 											).unwrap()
 										};
-										send.send(response).unwrap();
+										server_send(Message::text(response));
 									});
-									future_responses.push(receive);
 								} else {
 									panic!("message {} isn't registered in server registry table", payload.name);
 								}
@@ -128,63 +199,17 @@ impl Client {
 							}
 						}
 					},
-					Ok(OwnedMessage::Close(_)) => {
-						callback();
-						break
+					Ok(Message::Close(_)) => close_server(),
+					Ok(Message::Pong(_)) => update_heartbeat(None, Some(SystemTime::now())),
+					Err(err) => {
+						println!("client error => {}", err);
+						close_server();
 					},
-					Ok(OwnedMessage::Pong(_)) => last_pong = now,
-					Err(WebSocketError::NoDataAvailable) => {},
-					Err(WebSocketError::IoError(_)) => {},
-					Err(err) => panic!("{}", err),
 					_ => panic!("unsupported none-text type message from server")
 				}
-				// receiving calling messages from client call
-				if let Ok(message) = reader.try_recv() {
-					if message == String::from("_SHUTDOWN_") {
-						if !_send(&mut client, OwnedMessage::Close(None)) {
-							callback();
-							break
-						}
-					} else {
-						if !_send(&mut client, Message::text(message)) {
-							callback();
-							break
-						}
-					}
-				}
-				// check connection alive status
-				if now.duration_since(last_pong).unwrap() > Duration::from_secs(8) {
-					callback();
-					break
-				}
-				// check sending heartbeat message
-				if now.duration_since(last_ping).unwrap() > Duration::from_secs(2) {
-					if !_send(&mut client, OwnedMessage::Ping(vec![])) {
-						callback();
-						break
-					}
-					last_ping = now;
-				}
-				// handle all of future responses
-				let mut ok = true;
-				future_responses = future_responses
-					.into_iter()
-					.filter(|receive| {
-						if let Ok(response) = receive.try_recv() {
-							ok = _send(&mut client, Message::text(response));
-							false
-						} else {
-							true
-						}
-					})
-					.collect::<Vec<_>>();
-				if !ok {
-					callback();
-					break
-				}
-				thread::sleep(Duration::from_millis(sleep_ms));
+				sleep.tick().await;
 			}
-			println!("p2p client thread CLOSED");
+			println!("p2p client WORKER thread CLOSED");
 		});
 		Ok(ClientSender::new(writer, server_receiver))
 	}
