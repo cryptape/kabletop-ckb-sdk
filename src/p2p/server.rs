@@ -48,7 +48,6 @@ fn callback(client_id: i32, connected: bool) {
 fn close_client(id: i32) {
 	let prev = CLIENTS.write().unwrap().insert(id, None);
 	if prev.is_some() && prev.unwrap().is_some() {
-		println!("#{} callback closed", id);
 		callback(id, false);
 	}
 	HEARTBEATS.write().unwrap().remove(&id);
