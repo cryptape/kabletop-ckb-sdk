@@ -65,7 +65,7 @@ mod test {
 				})
 			})
 			.register_call("world")
-			.listen(300, 1, |id, active| println!("#{} server_active = {}", id, active.is_some()))
+			.listen(300, 1, |id, active| println!("#{} server_active = {}", id, active))
 			.unwrap();
 		server.set_id(1);
 		let client = Client::new("ws://127.0.0.1:11525")

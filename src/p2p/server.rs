@@ -4,14 +4,10 @@ use websocket::{
 	}
 };
 use std::{
-	thread, net::{
+	thread, sync::RwLock, net::{
 		SocketAddr, TcpStream
 	}, collections::HashMap, time::{
 		Duration, SystemTime
-	}, sync::{
-		RwLock, mpsc::{
-			Sender, Receiver, channel, sync_channel, SyncSender
-		}
 	}
 };
 use serde::{
@@ -29,19 +25,23 @@ use super::{
 use futures::{
 	future::BoxFuture, executor::block_on
 };
+use crossbeam::channel::{
+	unbounded, Sender, Receiver
+};
 
 lazy_static! {
 	static ref STOP: RwLock<bool> = RwLock::new(false);
 	static ref CLIENTS: RwLock<HashMap<i32, Option<Writer<TcpStream>>>> = RwLock::new(HashMap::new());
 	static ref HEARTBEATS: RwLock<HashMap<i32, SystemTime>> = RwLock::new(HashMap::new());
-	static ref SERVER_CLIENTS: RwLock<HashMap<i32, SyncSender<String>>> = RwLock::new(HashMap::new());
+	static ref SERVER_CLIENTS: RwLock<HashMap<i32, Sender<String>>> = RwLock::new(HashMap::new());
 	static ref SERVER_REGISTRY: RwLock<HashMap<String, Box<dyn Fn(i32, Value) -> BoxFuture<'static, Result<Value, String>> + Send + Sync + 'static>>> = RwLock::new(HashMap::new());
-	static ref CALLBACK: RwLock<Option<Box<dyn Fn(i32, Option<HashMap<String, Receiver<String>>>) + Send + Sync + 'static>>> = RwLock::new(None);
+	static ref RESPONSE_RECEIVERS: RwLock<HashMap<i32, HashMap<String, Receiver<String>>>> = RwLock::new(HashMap::new());
+	static ref CALLBACK: RwLock<Option<Box<dyn Fn(i32, bool) + Send + Sync + 'static>>> = RwLock::new(None);
 }
 
-fn callback(client_id: i32, receivers: Option<HashMap<String, Receiver<String>>>) {
+fn callback(client_id: i32, connected: bool) {
 	if let Some(cb) = &*CALLBACK.read().unwrap() {
-		cb(client_id, receivers);
+		cb(client_id, connected);
 	}
 }
 
@@ -49,8 +49,11 @@ fn close_client(id: i32) {
 	let prev = CLIENTS.write().unwrap().insert(id, None);
 	if prev.is_some() && prev.unwrap().is_some() {
 		println!("#{} callback closed", id);
-		callback(id, None);
+		callback(id, false);
 	}
+	HEARTBEATS.write().unwrap().remove(&id);
+	SERVER_CLIENTS.write().unwrap().remove(&id);
+	RESPONSE_RECEIVERS.write().unwrap().remove(&id);
 }
 
 fn udapte_heartbeat(id: i32) {
@@ -107,12 +110,12 @@ impl Server {
 	// listen connections at none-blocking mode
 	pub fn listen<F>(self, sleep_ms: u64, max_connection: u8, local_callback: F) -> Result<ServerClient> 
 		where
-			F: Fn(i32, Option<HashMap<String, Receiver<String>>>) + Send + Sync + 'static
+			F: Fn(i32, bool) + Send + Sync + 'static
 	{
 		let mut server = WsServer::bind(self.socket)?;
 		*STOP.write().unwrap() = false;
 		*CALLBACK.write().unwrap() = Some(Box::new(local_callback));
-		let (writer, reader) = channel::<(i32, String)>();
+		let (writer, reader) = unbounded::<(i32, String)>();
 		// start p2p server controller thread
 		thread::spawn(move || {
 			let sleep_ms = sleep_ms.clone();
@@ -123,10 +126,9 @@ impl Server {
 				}
 				// receiving message from server controller
 				if let Ok((client_id, message)) = reader.try_recv() {
-					assert!(message.len() < 4096);
 					if client_id > 0 {
 						// send to specified serverclient
-						match SERVER_CLIENTS.write().unwrap().get(&client_id) {
+						match SERVER_CLIENTS.write().unwrap().get_mut(&client_id) {
 							Some(serverclient) => serverclient.send(message).unwrap(),
 							None => println!("sending message {} to client #{} failed", message, client_id)
 						}
@@ -136,7 +138,7 @@ impl Server {
 						}
 						// send to all serverclients
 						for (client_id, _) in &*CLIENTS.write().unwrap() {
-							SERVER_CLIENTS.write().unwrap().get(client_id).unwrap().send(message.clone()).unwrap();
+							SERVER_CLIENTS.write().unwrap().get_mut(client_id).unwrap().send(message.clone()).unwrap();
 						}
 					}
 				}
@@ -159,16 +161,17 @@ impl Server {
 				}
 				let client = connection.accept().unwrap();
 				client_id += 1;
-				let (client_writer, client_reader) = sync_channel(4096);
+				let (client_writer, client_reader) = unbounded();
 				SERVER_CLIENTS.write().unwrap().insert(client_id, client_writer);
 				let mut response_sender = HashMap::new();
 				let mut response_receiver = HashMap::new();
 				for name in &self.client_registry {
-					let (cs, cr) = channel();
+					let (cs, cr) = unbounded();
 					response_sender.insert(name.clone(), cs);
 					response_receiver.insert(name.clone(), cr);
 				}
-				callback(client_id, Some(response_receiver));
+				RESPONSE_RECEIVERS.write().unwrap().insert(client_id, response_receiver);
+				callback(client_id, true);
 				let (mut stream, sink) = client.split().unwrap();
 				CLIENTS.write().unwrap().insert(client_id, Some(sink));
 				udapte_heartbeat(client_id);
@@ -197,7 +200,6 @@ impl Server {
 									// searching in server response registry table
 									if let Some(function) = SERVER_REGISTRY.read().unwrap().get(&payload.name) {
 										let params = from_str(payload.body.as_str()).unwrap();
-										let (send, receive) = channel();
 										let future = function(this_client_id, params);
 										// wait data process
 										thread::spawn(move || {
@@ -211,13 +213,7 @@ impl Server {
 													&Wrapper::Reply(Payload { name: payload.name, body })
 												).unwrap()
 											};
-											send.send(response).unwrap();
-										});
-										// wait to emit processed data
-										thread::spawn(move || {
-											if let Ok(response) = receive.recv() {
-												client_send(this_client_id, OwnedMessage::Text(response));
-											}
+											client_send(this_client_id, OwnedMessage::Text(response));
 										});
 									} else {
 										panic!("method {} can't find in server registry table", payload.name);
@@ -274,17 +270,15 @@ impl Server {
 // serverclient representing one connecting which generated after the server accepted one client
 // to handle request from server to that client
 pub struct ServerClient {
-	writer:           Sender<(i32, String)>,
-	client_receivers: HashMap<i32, HashMap<String, Receiver<String>>>,
-	client_id:        i32
+	writer:    Sender<(i32, String)>,
+	client_id: i32
 }
 
 impl ServerClient {
 	pub fn new(writer: Sender<(i32, String)>) -> Self {
 		ServerClient {
-			writer:           writer,
-			client_receivers: HashMap::new(),
-			client_id:        0
+			writer:    writer,
+			client_id: 0
 		}
 	}
 
@@ -302,10 +296,6 @@ impl ServerClient {
 			.expect("send shutdown");
 	}
 
-	pub fn append_receivers(&mut self, client_id: i32, client_receivers: HashMap<String, Receiver<String>>) {
-		self.client_receivers.insert(client_id, client_receivers);
-	}
-
 	pub fn set_id(&mut self, client_id: i32) -> &mut Self {
 		self.client_id = client_id;
 		self
@@ -320,7 +310,7 @@ impl Caller for ServerClient {
 		if self.client_id == 0 {
 			return Err(anyhow!("empty client_id"));
 		}
-		if let Some(receivers) = self.client_receivers.get(&self.client_id) {
+		if let Some(receivers) = RESPONSE_RECEIVERS.read().unwrap().get(&self.client_id) {
 			if let Some(receiver) = receivers.get(&String::from(name)) {
 				let request = to_string(
 					&Wrapper::Send(
