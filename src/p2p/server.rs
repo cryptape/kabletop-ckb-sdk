@@ -1,18 +1,16 @@
 use websocket::{
-	Message, message::OwnedMessage, ws, result::WebSocketError, sync::{
-		Server as WsServer, Client as WsClient
+	message::OwnedMessage, sender::Writer, sync::{
+		Server as WsServer
 	}
 };
 use std::{
 	thread, net::{
 		SocketAddr, TcpStream
-	}, collections::{
-		HashMap, HashSet
-	}, time::{
+	}, collections::HashMap, time::{
 		Duration, SystemTime
 	}, sync::{
 		RwLock, mpsc::{
-			Sender, Receiver, channel
+			Sender, Receiver, channel, sync_channel, SyncSender
 		}
 	}
 };
@@ -33,10 +31,48 @@ use futures::{
 };
 
 lazy_static! {
-	static ref CLIENT: RwLock<HashSet<i32>> = RwLock::new(HashSet::new());
-	static ref KICKED_CLIENTS: RwLock<Vec<i32>> = RwLock::new(vec![]);
-	static ref SERVER_REGISTRY: RwLock<HashMap<String, 
-		Box<dyn Fn(i32, Value) -> BoxFuture<'static, Result<Value, String>> + Send + Sync + 'static>>> = RwLock::new(HashMap::new());
+	static ref STOP: RwLock<bool> = RwLock::new(false);
+	static ref CLIENTS: RwLock<HashMap<i32, Option<Writer<TcpStream>>>> = RwLock::new(HashMap::new());
+	static ref HEARTBEATS: RwLock<HashMap<i32, SystemTime>> = RwLock::new(HashMap::new());
+	static ref SERVER_CLIENTS: RwLock<HashMap<i32, SyncSender<String>>> = RwLock::new(HashMap::new());
+	static ref SERVER_REGISTRY: RwLock<HashMap<String, Box<dyn Fn(i32, Value) -> BoxFuture<'static, Result<Value, String>> + Send + Sync + 'static>>> = RwLock::new(HashMap::new());
+	static ref CALLBACK: RwLock<Option<Box<dyn Fn(i32, Option<HashMap<String, Receiver<String>>>) + Send + Sync + 'static>>> = RwLock::new(None);
+}
+
+fn callback(client_id: i32, receivers: Option<HashMap<String, Receiver<String>>>) {
+	if let Some(cb) = &*CALLBACK.read().unwrap() {
+		cb(client_id, receivers);
+	}
+}
+
+fn close_client(id: i32) {
+	let prev = CLIENTS.write().unwrap().insert(id, None);
+	if prev.is_some() && prev.unwrap().is_some() {
+		println!("#{} callback closed", id);
+		callback(id, None);
+	}
+}
+
+fn udapte_heartbeat(id: i32) {
+	*HEARTBEATS.write().unwrap().entry(id).or_insert(SystemTime::now()) = SystemTime::now();
+}
+
+fn client_send(id: i32, msg: OwnedMessage) {
+	let mut ok = true;
+	if let Some(client) = CLIENTS.write().unwrap().get_mut(&id).unwrap() {
+		if let OwnedMessage::Close(_) = msg {
+			ok = false;
+		}
+		if let Err(err) = client.send_message(&msg) {
+			println!("#{} send message error: {}", id, err.to_string());
+			ok = false;
+		}
+	} else {
+		panic!("send on #{} CLOSED client", id);
+	}
+	if !ok {
+		close_client(id);
+	}
 }
 
 // a server instance for handling registering both request/response methods and listening at none-blocking mode
@@ -69,182 +105,168 @@ impl Server {
 	}
 
 	// listen connections at none-blocking mode
-	pub fn listen<F>(self, sleep_ms: u64, max_connection: u8, callback: F) -> Result<ServerClient> 
+	pub fn listen<F>(self, sleep_ms: u64, max_connection: u8, local_callback: F) -> Result<ServerClient> 
 		where
 			F: Fn(i32, Option<HashMap<String, Receiver<String>>>) + Send + Sync + 'static
 	{
 		let mut server = WsServer::bind(self.socket)?;
-		server.set_nonblocking(true)?;
-		let (writer, reader) = channel();
+		*STOP.write().unwrap() = false;
+		*CALLBACK.write().unwrap() = Some(Box::new(local_callback));
+		let (writer, reader) = channel::<(i32, String)>();
+		// start p2p server controller thread
 		thread::spawn(move || {
-			let mut client_id = 0;
-			let mut serverclients: HashMap<i32, Sender<String>> = HashMap::new();
-			let mut skip = false;
-			fn client_send<M: ws::Message>(client: &mut WsClient<TcpStream>, msg: M) -> bool {
-				if let Err(err) = client.send_message(&msg) {
-					println!("send message error: {}", err.to_string());
-					false
-				} else {
-					true
-				}
-			}
+			let sleep_ms = sleep_ms.clone();
 			loop {
-				// listening client connection
-				if let Ok(connect) = server.accept() {
-					if max_connection > 0 && CLIENT.write().unwrap().len() >= max_connection as usize {
-						connect.reject().expect("reject connection");
-						continue
-					}
-					client_id += 1;
-					let client = connect.accept().expect("accept connection");
-					client.set_nonblocking(true).expect("set blocking");
-					let (client_writer, client_reader) = channel();
-					serverclients.insert(client_id, client_writer);
-					let mut client_sender = HashMap::new();
-					let mut client_receiver = HashMap::new();
-					for name in &self.client_registry {
-						let (cs, cr) = channel();
-						client_sender.insert(name.clone(), cs);
-						client_receiver.insert(name.clone(), cr);
-					}
-					CLIENT.write().unwrap().insert(client_id);
-					// start new thread for serverclient handling
-					let this_client_id = client_id;
-					thread::spawn(move || {
-						let mut client = client;
-						let sleep_ms = sleep_ms.clone();
-						let mut last_ping = SystemTime::now();
-						let mut future_responses = vec![];
-						loop {
-							let now = SystemTime::now();
-							// receiving calling messages from client
-							match client.recv_message() {
-								Ok(OwnedMessage::Text(value)) => {
-									let message: Wrapper = {
-										let value = from_str(value.as_str()).expect("parse client message");
-										from_value(value).unwrap()
-									};
-									match message {
-										Wrapper::Send(payload) => {
-											// searching in server response registry table
-											if let Some(function) = SERVER_REGISTRY.read().unwrap().get(&payload.name) {
-												let params = from_str(payload.body.as_str()).unwrap();
-												let (send, receive) = channel();
-												let future = function(this_client_id, params);
-												thread::spawn(move || {
-													let body;
-													let response = {
-														match block_on(async move { future.await }) {
-															Ok(result)  => body = to_string(&result).unwrap(),
-															Err(reason) => body = to_string(&json!(Error { reason })).unwrap()
-														}
-														to_string(
-															&Wrapper::Reply(Payload { name: payload.name, body })
-														).unwrap()
-													};
-													send.send(response).unwrap();
-												});
-												future_responses.push(receive);
-											} else {
-												panic!("method {} can't find in server registry table", payload.name);
-											}
-										},
-										Wrapper::Reply(payload) => {
-											// searching in client message registry sender table
-											if let Some(sender) = client_sender.get(&payload.name) {
-												sender.send(payload.body).unwrap();
-											} else {
-												panic!("method {} can't find in client registry table", payload.name);
-											}
-										}
-									}
-								},
-								Ok(OwnedMessage::Close(_)) => break,
-								Ok(OwnedMessage::Ping(_)) => {
-									last_ping = now;
-									if !client_send(&mut client, OwnedMessage::Pong(vec![])) {
-										break
-									}
-								},
-								Err(WebSocketError::NoDataAvailable) => {},
-								Err(WebSocketError::IoError(_)) => {},
-								Err(err) => panic!("{}", err),
-								_ => panic!("unsupported none-text type message from client")
-							}
-							// fetching message from server client
-							if let Ok(message) = client_reader.try_recv() {
-								if message == String::from("_SHUTDOWN_") {
-									client_send(&mut client, OwnedMessage::Close(None));
-									break
-								}
-								if !client_send(&mut client, Message::text(message)) {
-									break
-								}
-							}
-							// check connection alive status
-							if now.duration_since(last_ping).unwrap() > Duration::from_secs(8) {
-								break
-							}
-							// handle all of future responses
-							future_responses = future_responses
-								.into_iter()
-								.filter(|receive| {
-									if let Ok(response) = receive.try_recv() {
-										client_send(&mut client, Message::text(response));
-										false
-									} else {
-										true
-									}
-								})
-								.collect::<Vec<_>>();
-							thread::sleep(Duration::from_millis(sleep_ms));
-						}
-						KICKED_CLIENTS.write().unwrap().push(client_id);
-						println!("p2p serverclient #{} thread CLOSED", client_id);
-					});
-					callback(client_id, Some(client_receiver));
+				if *STOP.read().unwrap() {
+					println!("p2p server CONTROLLER thread closed");
+					return
 				}
 				// receiving message from server controller
 				if let Ok((client_id, message)) = reader.try_recv() {
+					assert!(message.len() < 4096);
 					if client_id > 0 {
 						// send to specified serverclient
-						if CLIENT.write().unwrap().get(&client_id).is_some() {
-							serverclients
-								.get(&client_id)
-								.expect("get client from serverclients")
-								.send(message)
-								.unwrap();
-						} else {
-							println!("sending message {} to client {} failed", message, client_id);
+						match SERVER_CLIENTS.write().unwrap().get(&client_id) {
+							Some(serverclient) => serverclient.send(message).unwrap(),
+							None => println!("sending message {} to client #{} failed", message, client_id)
 						}
 					} else {
-						// send to all serverclients
-						for client_id in &*CLIENT.write().unwrap() {
-							serverclients
-								.get(client_id)
-								.expect("get client from serverclients")
-								.send(message.clone())
-								.unwrap();
+						if message == String::from("_SHUTDOWN_") {
+							*STOP.write().unwrap() = true;
 						}
-						skip = message == String::from("_SHUTDOWN_");
+						// send to all serverclients
+						for (client_id, _) in &*CLIENTS.write().unwrap() {
+							SERVER_CLIENTS.write().unwrap().get(client_id).unwrap().send(message.clone()).unwrap();
+						}
 					}
-				}
-				// kick clients from KICKED_CLIENTS
-				if !KICKED_CLIENTS.read().unwrap().is_empty() {
-					let mut kicked_ids = KICKED_CLIENTS.write().unwrap();
-					for client_id in &*kicked_ids {
-						CLIENT.write().unwrap().remove(client_id);
-						callback(client_id.clone(), None);
-					}
-					kicked_ids.clear();
-				}
-				// check skip main thread
-				if skip && CLIENT.read().unwrap().is_empty() {
-					break
 				}
 				thread::sleep(Duration::from_millis(sleep_ms));
+				println!("tick");
 			}
-			println!("p2p server thread CLOSED");
+		});
+		// start p2p server worker thread
+		thread::spawn(move || {
+			let mut client_id = 0;
+			loop {
+				if *STOP.read().unwrap() {
+					println!("p2p server WORKER thread closed");
+					return
+				}
+				// listening client connection
+				let connection = server.accept().unwrap();
+				if max_connection > 0 && CLIENTS.write().unwrap().len() >= max_connection as usize {
+					connection.reject().unwrap();
+					continue
+				}
+				let client = connection.accept().unwrap();
+				client_id += 1;
+				let (client_writer, client_reader) = sync_channel(4096);
+				SERVER_CLIENTS.write().unwrap().insert(client_id, client_writer);
+				let mut response_sender = HashMap::new();
+				let mut response_receiver = HashMap::new();
+				for name in &self.client_registry {
+					let (cs, cr) = channel();
+					response_sender.insert(name.clone(), cs);
+					response_receiver.insert(name.clone(), cr);
+				}
+				callback(client_id, Some(response_receiver));
+				let (mut stream, sink) = client.split().unwrap();
+				CLIENTS.write().unwrap().insert(client_id, Some(sink));
+				udapte_heartbeat(client_id);
+				let this_client_id = client_id;
+				// start read thread for current connection
+				thread::spawn(move || loop {
+					if CLIENTS.read().unwrap().get(&this_client_id).unwrap().is_none() {
+						println!("p2p serverclient #{} READ thread closed", this_client_id);
+						return
+					}
+					// receiving calling messages from client
+					let recv = stream.recv_message();
+					if let Err(err) = recv {
+						println!("serverclient #{} next => {}", this_client_id, err);
+						close_client(this_client_id);
+						continue
+					}
+					match recv.unwrap() {
+						OwnedMessage::Text(value) => {
+							let message: Wrapper = {
+								let value = from_str(value.as_str()).expect("parse client message");
+								from_value(value).unwrap()
+							};
+							match message {
+								Wrapper::Send(payload) => {
+									// searching in server response registry table
+									if let Some(function) = SERVER_REGISTRY.read().unwrap().get(&payload.name) {
+										let params = from_str(payload.body.as_str()).unwrap();
+										let (send, receive) = channel();
+										let future = function(this_client_id, params);
+										// wait data process
+										thread::spawn(move || {
+											let body;
+											let response = {
+												match block_on(async move { future.await }) {
+													Ok(result)  => body = to_string(&result).unwrap(),
+													Err(reason) => body = to_string(&json!(Error { reason })).unwrap()
+												}
+												to_string(
+													&Wrapper::Reply(Payload { name: payload.name, body })
+												).unwrap()
+											};
+											send.send(response).unwrap();
+										});
+										// wait to emit processed data
+										thread::spawn(move || {
+											if let Ok(response) = receive.recv() {
+												client_send(this_client_id, OwnedMessage::Text(response));
+											}
+										});
+									} else {
+										panic!("method {} can't find in server registry table", payload.name);
+									}
+								},
+								Wrapper::Reply(payload) => {
+									// searching in client message registry sender table
+									if let Some(sender) = response_sender.get(&payload.name) {
+										sender.send(payload.body).unwrap();
+									} else {
+										panic!("method {} can't find in client registry table", payload.name);
+									}
+								}
+							}
+						},
+						OwnedMessage::Close(_) => close_client(this_client_id),
+						OwnedMessage::Ping(_) => {
+							udapte_heartbeat(this_client_id);
+							client_send(this_client_id, OwnedMessage::Pong(vec![]));
+						},
+						_ => panic!("unsupported none-text type message from client")
+					}
+				});
+				// start write thread for current connection
+				thread::spawn(move || {
+					let sleep_ms = sleep_ms.clone();
+					loop {
+						if CLIENTS.read().unwrap().get(&this_client_id).unwrap().is_none() {
+							println!("p2p serverclient #{} WRITE thread closed", this_client_id);
+							return
+						}
+						// fetching message from server client
+						if let Ok(msg) = client_reader.try_recv() {
+							if msg == String::from("_SHUTDOWN_") {
+								client_send(this_client_id, OwnedMessage::Close(None));
+							} else {
+								client_send(this_client_id, OwnedMessage::Text(msg));
+							}
+						}
+						// check connection alive status
+						let last_ping = *HEARTBEATS.read().unwrap().get(&this_client_id).unwrap();
+						if SystemTime::now().duration_since(last_ping).unwrap() > Duration::from_secs(8) {
+							close_client(this_client_id);
+						}
+						thread::sleep(Duration::from_millis(sleep_ms));
+					}
+				});
+			}
 		});
 		Ok(ServerClient::new(writer))
 	}
@@ -268,7 +290,7 @@ impl ServerClient {
 	}
 
 	pub fn active(&self) -> bool {
-		if let Ok(clients) = CLIENT.read() {
+		if let Ok(clients) = CLIENTS.read() {
 			!clients.is_empty()
 		} else {
 			false
