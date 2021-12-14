@@ -141,7 +141,6 @@ impl Server {
 					}
 				}
 				thread::sleep(Duration::from_millis(sleep_ms));
-				println!("tick");
 			}
 		});
 		// start p2p server worker thread
