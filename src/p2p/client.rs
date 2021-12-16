@@ -123,6 +123,7 @@ impl Client {
 		// start client write thread
 		thread::spawn(move || {
 			let sleep_ms = sleep_ms.clone();
+			update_heartbeat(Some(SystemTime::now()), Some(SystemTime::now()));
 			loop {
 				if SERVER.read().unwrap().is_none() {
 					println!("p2p client thread CLOSED");
