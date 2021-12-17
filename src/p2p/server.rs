@@ -39,6 +39,14 @@ lazy_static! {
 	static ref CALLBACK: RwLock<Option<Box<dyn Fn(i32, bool) + Send + Sync + 'static>>> = RwLock::new(None);
 }
 
+fn init_statics() {
+	*STOP.write().unwrap() = false;
+	*CLIENTS.write().unwrap() = HashMap::new();
+	*HEARTBEATS.write().unwrap() = HashMap::new();
+	*SERVER_CLIENTS.write().unwrap() = HashMap::new();
+	*RESPONSE_RECEIVERS.write().unwrap() = HashMap::new();
+}
+
 fn callback(client_id: i32, connected: bool) {
 	if let Some(cb) = &*CALLBACK.read().unwrap() {
 		cb(client_id, connected);
@@ -112,7 +120,7 @@ impl Server {
 			F: Fn(i32, bool) + Send + Sync + 'static
 	{
 		let mut server = WsServer::bind(self.socket)?;
-		*STOP.write().unwrap() = false;
+		init_statics();
 		*CALLBACK.write().unwrap() = Some(Box::new(local_callback));
 		let (writer, reader) = unbounded::<(i32, String)>();
 		// start p2p server controller thread
@@ -129,7 +137,7 @@ impl Server {
 						// send to specified serverclient
 						match SERVER_CLIENTS.write().unwrap().get_mut(&client_id) {
 							Some(serverclient) => serverclient.send(message).unwrap(),
-							None => println!("sending message {} to client #{} failed", message, client_id)
+							None => println!("send message {} to client #{} failed", message, client_id)
 						}
 					} else {
 						if message == String::from("_SHUTDOWN_") {
@@ -137,7 +145,10 @@ impl Server {
 						}
 						// send to all serverclients
 						for (client_id, _) in &*CLIENTS.write().unwrap() {
-							SERVER_CLIENTS.write().unwrap().get_mut(client_id).unwrap().send(message.clone()).unwrap();
+							match SERVER_CLIENTS.write().unwrap().get_mut(client_id) {
+								Some(serverclient) => serverclient.send(message.clone()).unwrap(),
+								None => println!("send message {} to client #{} failed", message, client_id)
+							}
 						}
 					}
 				}
@@ -290,9 +301,9 @@ impl ServerClient {
 	}
 
 	pub fn shutdown(&self) {
-		self.writer
-			.send((0, String::from("_SHUTDOWN_")))
-			.expect("send shutdown");
+		if let Err(err) = self.writer.send((0, String::from("_SHUTDOWN_"))) {
+			println!("[WRAN] shutdown error: {}", err);
+		}
 	}
 
 	pub fn set_id(&mut self, client_id: i32) -> &mut Self {
