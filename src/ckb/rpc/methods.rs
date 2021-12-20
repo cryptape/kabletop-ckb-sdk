@@ -2,7 +2,9 @@ use async_jsonrpc_client::{
     HttpClient, Output, Transport, Params
 };
 use ckb_types::{
-    prelude::*, core::BlockView, H256, packed::{
+    prelude::*, H256, core::{
+		BlockView, Capacity
+	}, packed::{
         Block, Transaction, Byte32, Script
     }
 };
@@ -15,7 +17,7 @@ use anyhow::{
 use crate::{
     config::VARS as _C, ckb::{
 		transaction::helper::sighash_script, rpc::types::{
-			Pagination, Cell, SearchKey, Order, ckb, ScriptType, CellsCapacity
+			Pagination, Cell, SearchKey, Order, ckb, ScriptType
 		}
 	}
 };
@@ -136,19 +138,27 @@ pub async fn get_live_cells(search_key: SearchKey, limit: u32, cursor: Option<Js
     }
 }
 
-pub async fn get_total_capacity(lock_args: Vec<u8>) -> Result<ckb::CellsCapacity> {
+pub async fn get_total_capacity(lock_args: Vec<u8>) -> Result<Capacity> {
+    let mut cursor = None;
+	let mut total_capacity = 0u64;
 	let lock_script = sighash_script(lock_args.as_slice());
-	let search_key = SearchKey::new(lock_script.into(), ScriptType::Lock);
-    let output = INDEXER_CLIENT.request("get_cells_capacity", Some(Params::Array(vec![
-        json!(search_key)
-    ]))).await?;
-	match output {
-		Output::Success(value) => {
-			let capacity: CellsCapacity = from_value(value.result)?;
-			Ok(capacity.into())
-		},
-		Output::Failure(err) => Err(anyhow!(err))
+    loop {
+		let search_key = SearchKey::new(lock_script.clone().into(), ScriptType::Lock);
+		let live_cells = get_live_cells(search_key, 10, cursor).await?;
+		live_cells.objects
+			.iter()
+			.for_each(|cell| {
+				if cell.output.type_().is_none() {
+					let cell_capacity: u64 = cell.output.capacity().unpack();
+					total_capacity += cell_capacity;
+				}
+			});
+        if live_cells.last_cursor.is_empty() {
+            break;
+        } 
+        cursor = Some(live_cells.last_cursor);
 	}
+	Ok(Capacity::shannons(total_capacity))
 }
 
 pub async fn get_live_nfts(lock_script: Script, type_script: Option<Script>, cellstep: u32) -> Result<HashMap<[u8; 20], u32>> {

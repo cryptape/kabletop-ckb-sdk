@@ -1,6 +1,5 @@
-use ckb_types::H256;
 use ckb_jsonrpc_types::{
-    Uint32, Uint64, Script, BlockNumber, JsonBytes, CellOutput, OutPoint, Capacity
+    Uint32, Uint64, Script, BlockNumber, JsonBytes, CellOutput, OutPoint
 };
 use serde::{
     Deserialize, Serialize
@@ -54,13 +53,6 @@ pub struct Cell {
     pub tx_index:     Uint32,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct CellsCapacity {
-    capacity:     Capacity,
-    block_hash:   H256,
-    block_number: BlockNumber,
-}
-
 impl SearchKey {
     pub fn new(script: Script, script_type: ScriptType) -> SearchKey {
         SearchKey {
@@ -84,19 +76,12 @@ impl SearchKey {
 // ckb types format for a better use that turned from previous json types
 pub mod ckb {
     use ckb_types::{
-        prelude::*, bytes::Bytes, core::Capacity, H256,
-        packed::{
+        prelude::*, bytes::Bytes, packed::{
             CellOutput, OutPoint
         }
     };
     use std::convert::From;
     use crate::ckb::rpc::types as json;
-	
-	pub struct CellsCapacity {
-		pub capacity:     Capacity,
-		pub block_hash:   H256,
-		pub block_number: u64,
-	}
 
     pub struct Cell {
         pub output:       CellOutput,
@@ -124,15 +109,4 @@ pub mod ckb {
             }
         }
     }
-
-	impl From<json::CellsCapacity> for CellsCapacity {
-		fn from(json_capacity: json::CellsCapacity) -> Self {
-			let capacity: Capacity = json_capacity.capacity.into();
-            let block_number = u64::from(json_capacity.block_number);
-			let block_hash = json_capacity.block_hash;
-			CellsCapacity {
-				capacity, block_number, block_hash
-			}
-		}
-	}
 }
