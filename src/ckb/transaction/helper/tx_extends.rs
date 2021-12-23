@@ -109,7 +109,7 @@ pub async fn complete_tx_with_sighash_cells(tx: TransactionView, pubkey_hash: &[
             .objects
             .iter()
             .filter(|cell| {
-				let is_contract = vec![&_C.nft.tx_hash, &_C.wallet.tx_hash, &_C.payment.tx_hash, &_C.kabletop.tx_hash]
+				let is_contract = vec![&_C.nft.tx_hash, &_C.wallet.tx_hash, &_C.payment.tx_hash, &_C.kabletop.tx_hash, &_C.luacodes[0].tx_hash]
 					.iter()
 					.any(|&hash| hash == &cell.out_point.tx_hash());
                 if is_contract

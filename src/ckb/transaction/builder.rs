@@ -516,6 +516,10 @@ pub async fn build_tx_challenge_channel(
 	}
 	let mut hash_proof = [0u8; 32];
 	blake2b.finalize(&mut hash_proof);
+	// let last_signature = match rounds.last() {
+	// 	Some(round) => round.1.clone(),
+	// 	None        => Signature::default()
+	// };
 	let last_signature = rounds.last().unwrap().1.clone();
 	let challenge_data = protocol::Challenge::new_builder()
         .count(challenge_count.into())

@@ -42,7 +42,7 @@ lazy_static! {
 fn init_statics() {
 	*STOP.write().unwrap() = false;
 	*CLIENTS.write().unwrap() = HashMap::new();
-	*HEARTBEATS.write().unwrap() = HashMap::new();
+	// *HEARTBEATS.write().unwrap() = HashMap::new();
 	*SERVER_CLIENTS.write().unwrap() = HashMap::new();
 	*RESPONSE_RECEIVERS.write().unwrap() = HashMap::new();
 }
