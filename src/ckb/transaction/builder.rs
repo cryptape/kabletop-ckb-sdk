@@ -689,7 +689,7 @@ pub async fn build_tx_close_channel(
 			.map(|&(pkhash, ckb)| {
 				let lock_script = Script::new_builder()
 					.code_hash(kabletop_args.lock_code_hash().into())
-					.hash_type(ScriptHashType::Data.into())
+					.hash_type(ScriptHashType::Type.into())
 					.args(Bytes::from(<[u8; 20]>::from(pkhash).to_vec()).pack())
 					.build();
 				CellOutput::new_builder()
