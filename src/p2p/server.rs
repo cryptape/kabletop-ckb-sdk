@@ -78,7 +78,8 @@ fn client_send(id: i32, msg: OwnedMessage) {
 			ok = false;
 		}
 	} else {
-		panic!("send on #{} CLOSED client", id);
+		println!("send on #{} CLOSED client", id);
+		ok = false;
 	}
 	if !ok {
 		close_client(id);
