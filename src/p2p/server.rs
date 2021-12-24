@@ -42,7 +42,6 @@ lazy_static! {
 fn init_statics() {
 	*STOP.write().unwrap() = false;
 	*CLIENTS.write().unwrap() = HashMap::new();
-	// *HEARTBEATS.write().unwrap() = HashMap::new();
 	*SERVER_CLIENTS.write().unwrap() = HashMap::new();
 	*RESPONSE_RECEIVERS.write().unwrap() = HashMap::new();
 }
@@ -189,7 +188,8 @@ impl Server {
 				let this_client_id = client_id;
 				// start read thread for current connection
 				thread::spawn(move || loop {
-					if CLIENTS.read().unwrap().get(&this_client_id).unwrap().is_none() {
+					if CLIENTS.read().unwrap().get(&this_client_id).is_none()
+						|| CLIENTS.read().unwrap().get(&this_client_id).unwrap().is_none() {
 						println!("p2p serverclient #{} READ thread closed", this_client_id);
 						return
 					}
@@ -252,7 +252,8 @@ impl Server {
 				thread::spawn(move || {
 					let sleep_ms = sleep_ms.clone();
 					loop {
-						if CLIENTS.read().unwrap().get(&this_client_id).unwrap().is_none() {
+						if CLIENTS.read().unwrap().get(&this_client_id).is_none()
+							|| CLIENTS.read().unwrap().get(&this_client_id).unwrap().is_none() {
 							println!("p2p serverclient #{} WRITE thread closed", this_client_id);
 							return
 						}
@@ -265,9 +266,10 @@ impl Server {
 							}
 						}
 						// check connection alive status
-						let last_ping = *HEARTBEATS.read().unwrap().get(&this_client_id).unwrap();
-						if SystemTime::now().duration_since(last_ping).unwrap() > Duration::from_secs(8) {
-							close_client(this_client_id);
+						if let Some(last_ping) = HEARTBEATS.read().unwrap().get(&this_client_id) {
+							if SystemTime::now().duration_since(*last_ping).unwrap() > Duration::from_secs(8) {
+								close_client(this_client_id);
+							}
 						}
 						thread::sleep(Duration::from_millis(sleep_ms));
 					}
