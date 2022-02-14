@@ -1,6 +1,6 @@
-The following operational interfaces are provided:
+CKB-SDK provides the following operational interfaces:
 > 1. Create CKB transactions to interact with Kabletop contracts.
-> 2. Provide build-in P2P module to enable easily implementing P2P client and server, but it's unstable now and will be soon replaced with more stable P2P crates.
-> 3. Implement simple wallet manager to manage plaintext keys, and will upgrade to support universal keys management tools like WalletConnect soon.
+> 2. Provide a build-in P2P module to enable easy implementation of a P2P client and server. (Albeit unstable at the moment and soon to be replaced with more stable P2P crates.)
+> 3. Implement a simple wallet manager to manage plaintext keys, and will soon be upgraded to support generic key management tools like [WalletConnect](https://walletconnect.com/).
 
-<a href="https://github.com/ashuralyk/kabletop-godot">kabletop-godot</a> is writen based on kabletop-ckb-sdk, which provides more productive interfaces to help developer easily write kabletop games with Godot game engin. 
+[kabletop-godot](https://github.com/ashuralyk/kabletop-godot) is written on `kabletop-ckb-sdk`, providing more productive interfaces to help developers write Kabletop games with ease using the Godot game engine.
